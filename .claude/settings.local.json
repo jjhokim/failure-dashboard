@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -)",
+      "Bash(python -c ':*)",
+      "Bash(streamlit run:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501/healthz)",
+      "Bash(pip install:*)",
+      "Bash(python -m streamlit --version)",
+      "Bash(python -m streamlit run frontend/app.py --server.port 8501)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" http://localhost:8501/healthz)"
+    ]
+  }
+}
