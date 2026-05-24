@@ -17,8 +17,8 @@ from typing import Optional
 
 class 제대구분(str, Enum):
     """정비 제대 분류"""
-    운용부대 = "운용부대"   # 1제대
-    정비부대 = "정비부대"   # 2제대
+    부대정비 = "부대정비"   # 1제대
+    야전정비 = "야전정비"   # 2제대
     창정비   = "창정비"     # 3제대
 
 
@@ -103,7 +103,7 @@ class 고장이력:
 CREATE_고장이력_TABLE = """
 CREATE TABLE IF NOT EXISTS 고장이력 (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    제대구분        TEXT    NOT NULL,                  -- 운용부대 / 정비부대 / 창정비
+    제대구분        TEXT    NOT NULL,                  -- 부대정비 / 야전정비 / 창정비
     발생일시        TEXT    NOT NULL,                  -- ISO 8601 형식 (YYYY-MM-DD HH:MM:SS)
     체계명          TEXT    NOT NULL,                  -- 체계-A / 체계-B / 체계-C
     LRU명           TEXT    NOT NULL,                  -- LRU-001 ~ LRU-010
