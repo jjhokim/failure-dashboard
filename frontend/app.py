@@ -283,13 +283,19 @@ def _사이드바() -> str:
         # DB 현황 요약 — 네이티브 컴포넌트 사용
         df_all = 고장이력_전체조회()
         kpi    = KPI_요약(df_all)
-        ao_pct = kpi["가용도_Ao"] * 100
-        ao_delta_color = "normal" if ao_pct >= 80 else "inverse"
+        _ao    = kpi["가용도_Ao"]
+        ao_pct = _ao * 100 if _ao is not None else None
+        ao_delta_color = ("normal" if ao_pct is not None and ao_pct >= 80
+                          else "inverse")
 
+        ao_value    = f"{ao_pct:.1f}%" if ao_pct is not None else "N/A"
+        ao_delta    = (f"목표 80% {'달성' if ao_pct >= 80 else '미달'}"
+                       if ao_pct is not None else "수리완료 데이터 없음")
+        ao_delta_color = ao_delta_color if ao_pct is not None else "off"
         st.metric(
             label="현재 가용도 (Ao)",
-            value=f"{ao_pct:.1f}%",
-            delta=f"목표 80% {'달성' if ao_pct >= 80 else '미달'}",
+            value=ao_value,
+            delta=ao_delta,
             delta_color=ao_delta_color,
         )
         st.caption(f"미완료 {kpi['미완료_건수']}건 / 전체 {kpi['총_고장건수']}건")
@@ -313,15 +319,18 @@ def 페이지_요약대시보드() -> None:
 
     # KPI 카드 5개
     c1, c2, c3, c4, c5 = st.columns(5)
-    ao_color = C["green"] if ao >= 0.80 else C["red"]
+    ao_color  = C["green"] if (ao is not None and ao >= 0.80) else C["red"]
+    ao_str    = f"{ao*100:.1f}%" if ao is not None else "—"
+    mttr_str  = f"{kpi['MTTR_h']:.1f}h" if kpi["MTTR_h"] is not None else "—"
     with c1:
-        _kpi_card("가동률 Ao", f"{ao*100:.1f}%",
-                  sub="목표 ≥ 80%", border_color=ao_color)
+        _kpi_card("가동률 Ao", ao_str,
+                  sub="목표 ≥ 80%" if ao is not None else "수리완료 데이터 없음",
+                  border_color=ao_color)
     with c2:
         _kpi_card("MTBF", f"{kpi['MTBF_h']:.1f}h",
                   sub="평균 고장 간격", border_color=C["blue"])
     with c3:
-        _kpi_card("MTTR", f"{kpi['MTTR_h']:.1f}h",
+        _kpi_card("MTTR", mttr_str,
                   sub="평균 수리 시간", border_color=C["orange"])
     with c4:
         _kpi_card("총 고장건수", f"{kpi['총_고장건수']}건",
@@ -571,6 +580,11 @@ def 페이지_고장현황() -> None:
         m1, m2 = st.columns(2)
         with m1:
             new_상태 = st.selectbox("처리상태 변경", 상태값목록, index=현재상태idx)
+            new_수리시작 = st.text_input(
+                "수리시작시간 수정",
+                value=row["수리시작시간"] or "",
+                placeholder="YYYY-MM-DD HH:MM:SS",
+            )
             new_수리완료 = st.text_input(
                 "수리완료시간 수정",
                 value=row["수리완료시간"] or "",
@@ -591,6 +605,8 @@ def 페이지_고장현황() -> None:
 
     if 수정_제출:
         수정내용: dict = {"처리상태": new_상태}
+        if new_수리시작.strip():
+            수정내용["수리시작시간"] = new_수리시작.strip()
         if new_수리완료.strip():
             수정내용["수리완료시간"] = new_수리완료.strip()
         if new_조치.strip():

@@ -184,12 +184,12 @@ def 고장이력_삭제(id: int) -> None:
 # 4. 분석 지표 계산
 # ===========================================================================
 
-def MTTR_계산(df: pd.DataFrame) -> float:
+def MTTR_계산(df: pd.DataFrame) -> Optional[float]:
     """
     평균수리시간(MTTR) 계산.
 
     수리완료 건의 수리소요시간_h 평균을 반환한다.
-    유효 데이터가 없으면 0.0 반환.
+    유효 데이터가 없으면 None 반환 (0.0 반환 시 Ao가 100%로 오계산되는 문제 방지).
 
     Parameters
     ----------
@@ -198,7 +198,7 @@ def MTTR_계산(df: pd.DataFrame) -> float:
     """
     완료건 = df[df["처리상태"] == "수리완료"]["수리소요시간_h"].dropna()
     if 완료건.empty:
-        return 0.0
+        return None
     return round(완료건.mean(), 2)
 
 
@@ -232,16 +232,18 @@ def MTBF_계산(df: pd.DataFrame, 관측기간_h: Optional[float] = None) -> flo
     return round(관측기간_h / 건수, 2)
 
 
-def 가용도_계산(mtbf: float, mttr: float) -> float:
+def 가용도_계산(mtbf: float, mttr: Optional[float]) -> Optional[float]:
     """
     운용 가용도(Ao) 계산.
 
     Ao = MTBF / (MTBF + MTTR)
-    MTBF + MTTR == 0 이면 0.0 반환.
+    MTTR가 None(수리완료 데이터 없음)이거나 분모가 0이면 None 반환.
     """
+    if mttr is None:
+        return None
     분모 = mtbf + mttr
     if 분모 == 0:
-        return 0.0
+        return None
     return round(mtbf / 분모, 4)  # 소수점 4자리 (예: 0.8734 → 87.34%)
 
 
