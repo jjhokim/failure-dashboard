@@ -353,16 +353,18 @@ def 페이지_요약대시보드() -> None:
     ai_color  = C["green"] if (ai is not None and ai >= 0.80) else C["red"]
     ai_str    = f"{ai*100:.1f}%" if ai is not None else "—"
     mttr_str  = f"{kpi['MTTR_h']:.1f}h" if kpi["MTTR_h"] is not None else "—"
+    mtbf_sub  = ("운용시간 기준" if kpi.get("MTBF_기준") == "운용시간"
+                 else "달력근사 · op_hours 필요")
     with c1:
         _kpi_card("고유가용도 Ai", ai_str,
                   sub="목표 ≥ 80%" if ai is not None else "수리완료 데이터 없음",
                   border_color=ai_color)
     with c2:
         _kpi_card("MTBF", f"{kpi['MTBF_h']:.1f}h",
-                  sub="평균 고장 간격", border_color=C["blue"])
+                  sub=mtbf_sub, border_color=C["blue"])
     with c3:
         _kpi_card("MTTR", mttr_str,
-                  sub=f"완료 {kpi['MTTR_완료건수']}건 · 미완료 {kpi['미완료_건수']}건",
+                  sub=f"KM 절단보정 · 완료 {kpi['MTTR_완료건수']} · 미완료 {kpi['미완료_건수']}",
                   border_color=C["orange"])
     with c4:
         _kpi_card("총 고장건수", f"{kpi['총_고장건수']}건",
@@ -370,6 +372,12 @@ def 페이지_요약대시보드() -> None:
     with c5:
         _kpi_card("미완료", f"{kpi['미완료_건수']}건",
                   sub="수리중 + 미해결", border_color=C["red"])
+
+    if kpi.get("가용도_Ao") is None:
+        st.caption(
+            "ℹ️ 운용가용도 Ao = MTBM/(MTBM+MDT)는 MDT/ALDT(정비중단·군수지연) "
+            "데이터 도입 후 산출됩니다 (현재 미산출). 위 지표는 고유가용도 Ai 기준."
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
 

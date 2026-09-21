@@ -110,9 +110,11 @@ def test_kpi_요약_키():
     ])
     kpi = KPI_요약(df)
 
-    # Ao → Ai 정정: 새 키가 존재하고 구 키는 없어야 한다
+    # Ao → Ai 정정: 고유가용도는 가용도_Ai 키로 제공된다
     assert "가용도_Ai" in kpi
-    assert "가용도_Ao" not in kpi
+    # Phase 0-4: 가용도_Ao는 '운용가용도'(별도 의미)로 재도입됨.
+    # 현재 MDT/ALDT 결측이므로 None이어야 한다 (억지 계산 금지).
+    assert kpi["가용도_Ao"] is None
     assert kpi["총_고장건수"] == 2
     assert kpi["미완료_건수"] == 1
     assert kpi["MTTR_완료건수"] == 1

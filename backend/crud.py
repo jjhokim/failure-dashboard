@@ -20,6 +20,7 @@ from typing import Optional
 
 import pandas as pd
 
+from backend import metrics
 from backend.database import get_connection
 from backend.models import BIT이벤트, LCN노드, 고장이력, 장비
 
@@ -195,102 +196,85 @@ def 고장이력_삭제(id: int) -> None:
 # 4. 분석 지표 계산
 # ===========================================================================
 
+# 지표 계산 로직은 backend/metrics.py 순수 함수에 집중한다(원칙 #3).
+# 아래는 기존 호출부·테스트 호환을 위한 얇은 위임 래퍼다.
+
 def MTTR_계산(df: pd.DataFrame) -> Optional[float]:
     """
-    평균수리시간(MTTR) 계산.
+    [레거시·비교용] 수리완료 건 단순 평균 MTTR → metrics.mttr_naive 위임.
 
-    수리완료 건의 수리소요시간_h 평균을 반환한다.
-    유효 데이터가 없으면 None 반환 (0.0 반환 시 Ao가 100%로 오계산되는 문제 방지).
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        고장이력_전체조회() 결과.
+    ⚠ 우측절단 미처리(오류 #3). 정식 산출은 metrics.mttr_km(KPI_요약이 사용).
     """
-    완료건 = df[df["처리상태"] == "수리완료"]["수리소요시간_h"].dropna()
-    if 완료건.empty:
-        return None
-    return round(완료건.mean(), 2)
+    return metrics.mttr_naive(df)
 
 
 def MTBF_계산(df: pd.DataFrame, 관측기간_h: Optional[float] = None) -> float:
     """
-    평균고장간격(MTBF) 계산.
+    [레거시·폴백용] 달력 경과시간 기반 MTBF → metrics.mtbf_calendar 위임.
 
-    MTBF = 관측기간 / 고장건수
-    관측기간을 지정하지 않으면 df의 첫 발생일시 ~ 마지막 발생일시 구간을 사용한다.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        고장이력_전체조회() 결과.
-    관측기간_h : float, optional
-        명시적 관측 기간(시간). 미지정 시 데이터 범위로 자동 산출.
+    ⚠ 운용시간 기준 아님(오류 #2). 운용시간 데이터가 있으면
+    metrics.mtbf_logistics를 사용한다(KPI_요약이 자동 선택).
     """
-    건수 = len(df)
-    if 건수 == 0:
-        return 0.0
-
-    if 관측기간_h is None:
-        dates = pd.to_datetime(df["발생일시"], errors="coerce").dropna()
-        if len(dates) < 2:
-            return 0.0
-        관측기간_h = (dates.max() - dates.min()).total_seconds() / 3600
-
-    if 관측기간_h <= 0:
-        return 0.0
-
-    return round(관측기간_h / 건수, 2)
+    return metrics.mtbf_calendar(df, 관측기간_h)
 
 
 def 고유가용도_Ai_계산(mtbf: float, mttr: Optional[float]) -> Optional[float]:
-    """
-    고유가용도(Ai, Inherent Availability) 계산.
-
-    Ai = MTBF / (MTBF + MTTR)  — 설계단계 고유가용도.
-
-    주의: 이 수식은 예방정비·행정군수지연(ALDT)을 포함하지 않으므로
-    운용가용도(Ao)가 아니다. (알려진 오류 #1 정정: 기존 라벨 "Ao" → "Ai")
-    운용가용도 Ao = MTBM / (MTBM + MDT)는 ALDT/MDT 필드 도입 후
-    Phase 0-4에서 별도 산출한다 (결측 시 None, 억지 계산 금지).
-    근거: 방위사업청 「무기체계 RAM 업무지침」(2018).
-
-    MTTR가 None(수리완료 데이터 없음)이거나 분모가 0이면 None 반환.
-    """
-    if mttr is None:
-        return None
-    분모 = mtbf + mttr
-    if 분모 == 0:
-        return None
-    return round(mtbf / 분모, 4)  # 소수점 4자리 (예: 0.8734 → 87.34%)
+    """고유가용도 Ai = MTBF/(MTBF+MTTR) → metrics.availability_inherent 위임."""
+    return metrics.availability_inherent(mtbf, mttr)
 
 
 # ===========================================================================
 # 5. 집계
 # ===========================================================================
 
-def KPI_요약(df: pd.DataFrame, 관측기간_h: Optional[float] = None) -> dict:
+def KPI_요약(
+    df: pd.DataFrame,
+    systems: Optional[pd.DataFrame] = None,
+    관측기간_h: Optional[float] = None,
+) -> dict:
     """
-    대시보드 KPI 카드용 요약 지표를 반환한다.
+    대시보드 KPI 카드용 요약 지표를 반환한다 (계산은 metrics.py 위임).
+
+    - MTBF: 운용시간 기반(mtbf_logistics) 우선, systems 미등록 시 달력근사 폴백.
+    - MTTR: Kaplan-Meier 절단보정(mttr_km). lifelines 미설치 시 naive 폴백.
+    - Ai  : availability_inherent. Ao: availability_operational(MDT 결측 시 None).
+
+    Parameters
+    ----------
+    systems : pd.DataFrame, optional
+        장비 모집단. 미지정 시 장비_전체조회()로 자동 조회.
 
     Returns
     -------
     dict
-        {
-          "총_고장건수":   int,
-          "미완료_건수":   int,
-          "MTBF_h":        float,   # 시간 단위
-          "MTTR_h":        float,   # 시간 단위 (수리완료 건 평균)
-          "MTTR_완료건수": int,     # MTTR 평균에 반영된 완료 건수
-          "가용도_Ai":     float,   # 0~1 사이 소수 (고유가용도)
-        }
+        총_고장건수 / 미완료_건수 / MTBF_h / MTBF_기준 /
+        MTTR_h / MTTR_완료건수 / 가용도_Ai / 가용도_Ao
     """
-    mtbf = MTBF_계산(df, 관측기간_h)
-    mttr = MTTR_계산(df)
-    ai   = 고유가용도_Ai_계산(mtbf, mttr)
+    if systems is None:
+        try:
+            systems = 장비_전체조회()
+        except Exception:
+            systems = pd.DataFrame()
+
+    # MTBF: 운용시간 기반 우선, 없으면 달력근사
+    mtbf_log = metrics.mtbf_logistics(df, systems)
+    if mtbf_log is not None:
+        mtbf, mtbf_기준 = mtbf_log, "운용시간"
+    else:
+        mtbf, mtbf_기준 = metrics.mtbf_calendar(df, 관측기간_h), "달력근사"
+
+    # MTTR: KM 절단보정 (lifelines 미설치 시 naive 폴백)
+    try:
+        mttr = metrics.mttr_km(df)
+    except ImportError:
+        mttr = metrics.mttr_naive(df)
+
+    ai = metrics.availability_inherent(mtbf, mttr)
+
+    # Ao: MTBM·MDT 필요. 현재 MTBM 미산출·MDT 결측이므로 실무상 None.
+    ao = metrics.availability_operational(None, metrics.mean_mdt(df))
 
     미완료 = df[df["처리상태"] != "수리완료"]
-
     if df.empty:
         mttr_완료건수 = 0
     else:
@@ -302,9 +286,11 @@ def KPI_요약(df: pd.DataFrame, 관측기간_h: Optional[float] = None) -> dict
         "총_고장건수":   len(df),
         "미완료_건수":   len(미완료),
         "MTBF_h":        mtbf,
+        "MTBF_기준":     mtbf_기준,
         "MTTR_h":        mttr,
         "MTTR_완료건수": mttr_완료건수,
         "가용도_Ai":     ai,
+        "가용도_Ao":     ao,
     }
 
 
