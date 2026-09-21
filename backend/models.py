@@ -10,16 +10,18 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
+from backend import constants
+
 
 # ---------------------------------------------------------------------------
 # Enum 상수
 # ---------------------------------------------------------------------------
 
 class 제대구분(str, Enum):
-    """정비 제대 분류"""
-    부대정비 = "부대정비"   # 1제대
-    야전정비 = "야전정비"   # 2제대
-    창정비   = "창정비"     # 3제대
+    """정비 제대 분류 (명칭 표준은 backend/constants.py 단일 소스에서 관리)"""
+    부대정비 = constants.부대정비   # 1제대
+    야전정비 = constants.야전정비   # 2제대
+    창정비   = constants.창정비     # 3제대
 
 
 class 체계명(str, Enum):
