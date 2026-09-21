@@ -136,10 +136,12 @@ def mttr_km(
     """
     Kaplan-Meier로 우측절단을 처리한 평균 수리시간(MTTR).
 
-    오류 #3 정정: 미완료(진행 중) 수리건을 우측절단(censored=True)으로 포함한다.
-      - 수리완료 건: duration=수리소요시간_h, event_observed=1 (관측)
-      - 미완료 건  : duration=(as_of - 수리시작시간), event_observed=0 (절단)
+    오류 #3 정정: 진행 중('수리중') 수리건을 우측절단(censored=True)으로 포함한다.
+      - '수리완료' 건: duration=수리소요시간_h, event_observed=1 (관측)
+      - '수리중'  건: duration=(as_of - 수리시작시간), event_observed=0 (절단)
         (수리시작시간이 없으면 절단 관측을 구성할 수 없어 제외)
+      - '미해결'  건: 능동적 수리가 진행되는 상태가 아니므로 MTTR 표본에서 제외한다.
+        (사용자 결정 (b): 수리중만 절단, 미해결 제외)
 
     MTTR 추정 = 제한평균생존시간(RMST) = ∫₀^{t_max} S(t) dt  (스텝 적분).
     as_of 미지정 시 데이터 내 최종 시각(수리완료/수리시작/발생일시의 최댓값)을
@@ -154,10 +156,10 @@ def mttr_km(
     durations = _수리완료_durations(failures)
     events = [1] * len(durations)
 
-    # 미완료건을 우측절단으로 편입 (수리시작시간 필요)
-    미완료 = failures[failures["처리상태"] != "수리완료"]
-    if "수리시작시간" in failures.columns and not 미완료.empty:
-        start = pd.to_datetime(미완료["수리시작시간"], errors="coerce")
+    # '수리중'(진행 중) 건만 우측절단으로 편입 ('미해결'은 제외; 수리시작시간 필요)
+    수리중 = failures[failures["처리상태"] == "수리중"]
+    if "수리시작시간" in failures.columns and not 수리중.empty:
+        start = pd.to_datetime(수리중["수리시작시간"], errors="coerce")
 
         if as_of is None:
             후보 = []
