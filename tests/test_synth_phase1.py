@@ -63,6 +63,31 @@ def test_delta0_대조군_vs_delta1_신호회수():
     assert acc1["accuracy_mean"] >= acc0["accuracy_mean"] + 0.10
 
 
+def test_effect_class_생성되고_라벨의_결정론적함수가_아님():
+    """
+    effect_class는 증상(물리상태)에서 확률적으로 파생된다(Phase 3 β·α 근사용).
+    군집 라벨의 결정론적 함수가 되면 순환성이 생기므로, 같은 군집 안에서도
+    EFF/NEFF가 섞여야 한다(R1).
+    """
+    res = generate(
+        SynthConfig(n_records=300, n_clusters=3, delta=1.0, noise_ratio=0.1, seed=2),
+        save=False,
+    )
+    obs, truth = res["obs"], res["truth"]
+    assert "effect_class" in obs.columns
+    assert set(obs["effect_class"]) <= {"EFF", "NEFF"}
+
+    # 라벨→effect_class가 1:1이면 결정론적 누출
+    섞인_군집 = 0
+    for c in sorted(set(truth["cluster_id"])):
+        if c == -1:
+            continue
+        vals = set(obs.loc[truth["cluster_id"] == c, "effect_class"])
+        if len(vals) > 1:
+            섞인_군집 += 1
+    assert 섞인_군집 >= 1
+
+
 def test_생성물_저장(tmp_path):
     cfg = SynthConfig(n_records=80, n_clusters=3, delta=0.5, seed=0)
     res = generate(cfg, out_dir=tmp_path, save=True)

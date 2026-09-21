@@ -48,6 +48,9 @@ def _assemble_observable(states_df: pd.DataFrame, narratives: list[str]) -> pd.D
             "고장유형": _증상_고장유형.get(r["symptom_code"], "기타"),
             "고장증상": narrative,          # narrative == 관측 텍스트
             "lcn": lcn,
+            # effect_class는 증상(물리상태)에서 확률적으로 파생된 관측값이다.
+            # 탐지 채널에는 쓰이지 않고 Phase 3 치명도 근사(β·α)에만 사용된다.
+            "effect_class": r["effect_class"],
             "제대구분": constants.제대_목록[_stable_idx(lcn, len(constants.제대_목록))],
             "처리상태": "수리완료",
             "source": "synthetic",

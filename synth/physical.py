@@ -19,6 +19,15 @@ BASE_DATE = pd.Timestamp("2025-01-01")
 
 # 증상 코드 및 부품 풀 (관측 텍스트가 아니라 잠재 물리상태 코드)
 SYMPTOMS = ["과열", "진동", "누유", "전압강하", "통신두절", "균열", "오작동", "소음"]
+
+# 증상별 임무영향(EFF) 발생 확률.
+# effect_class는 '증상'(물리상태)에서 확률적으로 파생되며, 군집 라벨의 함수가
+# 아니다(R1). 탐지 채널(의미·구조·시간)은 effect_class를 사용하지 않으므로
+# ARI 산출에 순환성을 만들지 않는다. 우선순위화(Phase 3)의 β·α 근사에만 쓰인다.
+EFF_확률 = {
+    "통신두절": 0.90, "전압강하": 0.70, "오작동": 0.70, "과열": 0.50,
+    "균열": 0.50, "누유": 0.30, "진동": 0.30, "소음": 0.10,
+}
 ENVIRONMENTS = ["고온", "저온", "습윤", "분진", "진동환경", "정상"]
 PARTS = [
     "구동모터", "전원공급장치", "제어보드", "유압펌프", "센서모듈",
@@ -137,6 +146,7 @@ def build_physical_states(
             records.append(dict(
                 record_id=rid, lcn=lcn, symptom_code=sym,
                 environment=env, occurred_at=BASE_DATE + pd.Timedelta(days=day),
+                effect_class="EFF" if rng.rand() < EFF_확률.get(sym, 0.5) else "NEFF",
             ))
             Cm = config.beta * config.alpha * cl["lam"] * (day + 1.0)
             truth.append(dict(
@@ -148,12 +158,14 @@ def build_physical_states(
     # 노이즈(단발성) — LCN·시각·증상·환경 전부 균등
     for _ in range(n_noise):
         day = float(rng.uniform(0, span))
+        sym = SYMPTOMS[rng.randint(len(SYMPTOMS))]
         records.append(dict(
             record_id=rid,
             lcn=lcn_pool[rng.randint(len(lcn_pool))],
-            symptom_code=SYMPTOMS[rng.randint(len(SYMPTOMS))],
+            symptom_code=sym,
             environment=ENVIRONMENTS[rng.randint(len(ENVIRONMENTS))],
             occurred_at=BASE_DATE + pd.Timedelta(days=day),
+            effect_class="EFF" if rng.rand() < EFF_확률.get(sym, 0.5) else "NEFF",
         ))
         truth.append(dict(
             record_id=rid, cluster_id=-1, beta=0.0, alpha=0.0,
