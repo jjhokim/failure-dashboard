@@ -31,6 +31,7 @@ from backend.crud import (
     미해결_고장_조회,
     불가동_추세,
     월별_고장건수,
+    제대별_MTTR,
     제대별_고장현황,
     체계별_MTTR,
     파레토_분석,
@@ -76,6 +77,15 @@ C = {
     "수리중":   C["orange"],
     "미해결":   C["red"],
 }
+
+# ---------------------------------------------------------------------------
+# 지표 신뢰성 배지 (R6)
+# ---------------------------------------------------------------------------
+# 화면의 모든 지표 카드에 데이터 성격·용도 배지를 표시한다.
+# 현재 로드 데이터는 sample_data.csv(가상 샘플)이므로 '샘플데이터 기준' 문구를 쓴다.
+# Phase 0-2에서 sources(레코드 출처: sample/synthetic/import) 필드 도입 후,
+# 합성데이터 비중에 따라 '합성데이터 기준 · 검증용'으로 자동 전환한다.
+배지_문구 = "샘플데이터 기준 · 검증용"
 
 # Plotly 공통 레이아웃 (다크 테마)
 _PLOT_LAYOUT = dict(
@@ -130,6 +140,18 @@ st.markdown(
         padding: 18px 20px 14px;
         border-left: 4px solid #444;
         margin-bottom: 4px;
+    }}
+    .kpi-badge {{
+        display: inline-block;
+        background: {C['orange']}22;
+        color: {C['orange']};
+        border: 1px solid {C['orange']}55;
+        padding: 1px 8px;
+        border-radius: 6px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: .03em;
+        margin: 0 0 8px;
     }}
     .kpi-label {{
         color: {C['muted']};
@@ -213,12 +235,20 @@ def _h(text: str) -> str:
     return "".join(f"&#{ord(c)};" if ord(c) > 127 else c for c in text)
 
 
-def _kpi_card(label: str, value: str, sub: str = "", border_color: str = C["blue"]) -> None:
-    """HTML 기반 KPI 카드 렌더링."""
-    sub_html = "" if not sub else f'<p class="kpi-sub">{_h(sub)}</p>'
+def _kpi_card(
+    label: str,
+    value: str,
+    sub: str = "",
+    border_color: str = C["blue"],
+    badge: str = 배지_문구,
+) -> None:
+    """HTML 기반 KPI 카드 렌더링. badge(R6)를 카드 상단에 표시한다."""
+    sub_html   = "" if not sub   else f'<p class="kpi-sub">{_h(sub)}</p>'
+    badge_html = "" if not badge else f'<span class="kpi-badge">{_h(badge)}</span>'
     st.markdown(
         f"""
         <div class="kpi-card" style="border-left-color:{border_color}">
+            {badge_html}
             <p class="kpi-label">{_h(label)}</p>
             <p class="kpi-value" style="color:{border_color}">{_h(value)}</p>
             {sub_html}
@@ -283,21 +313,22 @@ def _사이드바() -> str:
         # DB 현황 요약 — 네이티브 컴포넌트 사용
         df_all = 고장이력_전체조회()
         kpi    = KPI_요약(df_all)
-        _ao    = kpi["가용도_Ao"]
-        ao_pct = _ao * 100 if _ao is not None else None
-        ao_delta_color = ("normal" if ao_pct is not None and ao_pct >= 80
+        _ai    = kpi["가용도_Ai"]
+        ai_pct = _ai * 100 if _ai is not None else None
+        ai_delta_color = ("normal" if ai_pct is not None and ai_pct >= 80
                           else "inverse")
 
-        ao_value    = f"{ao_pct:.1f}%" if ao_pct is not None else "N/A"
-        ao_delta    = (f"목표 80% {'달성' if ao_pct >= 80 else '미달'}"
-                       if ao_pct is not None else "수리완료 데이터 없음")
-        ao_delta_color = ao_delta_color if ao_pct is not None else "off"
+        ai_value    = f"{ai_pct:.1f}%" if ai_pct is not None else "N/A"
+        ai_delta    = (f"목표 80% {'달성' if ai_pct >= 80 else '미달'}"
+                       if ai_pct is not None else "수리완료 데이터 없음")
+        ai_delta_color = ai_delta_color if ai_pct is not None else "off"
         st.metric(
-            label="현재 가용도 (Ao)",
-            value=ao_value,
-            delta=ao_delta,
-            delta_color=ao_delta_color,
+            label="현재 고유가용도 (Ai)",
+            value=ai_value,
+            delta=ai_delta,
+            delta_color=ai_delta_color,
         )
+        st.caption(f"🟠 {배지_문구}")
         st.caption(f"미완료 {kpi['미완료_건수']}건 / 전체 {kpi['총_고장건수']}건")
 
         st.divider()
@@ -315,23 +346,24 @@ def 페이지_요약대시보드() -> None:
 
     df  = 고장이력_전체조회()
     kpi = KPI_요약(df)
-    ao  = kpi["가용도_Ao"]
+    ai  = kpi["가용도_Ai"]
 
     # KPI 카드 5개
     c1, c2, c3, c4, c5 = st.columns(5)
-    ao_color  = C["green"] if (ao is not None and ao >= 0.80) else C["red"]
-    ao_str    = f"{ao*100:.1f}%" if ao is not None else "—"
+    ai_color  = C["green"] if (ai is not None and ai >= 0.80) else C["red"]
+    ai_str    = f"{ai*100:.1f}%" if ai is not None else "—"
     mttr_str  = f"{kpi['MTTR_h']:.1f}h" if kpi["MTTR_h"] is not None else "—"
     with c1:
-        _kpi_card("가동률 Ao", ao_str,
-                  sub="목표 ≥ 80%" if ao is not None else "수리완료 데이터 없음",
-                  border_color=ao_color)
+        _kpi_card("고유가용도 Ai", ai_str,
+                  sub="목표 ≥ 80%" if ai is not None else "수리완료 데이터 없음",
+                  border_color=ai_color)
     with c2:
         _kpi_card("MTBF", f"{kpi['MTBF_h']:.1f}h",
                   sub="평균 고장 간격", border_color=C["blue"])
     with c3:
         _kpi_card("MTTR", mttr_str,
-                  sub="평균 수리 시간", border_color=C["orange"])
+                  sub=f"완료 {kpi['MTTR_완료건수']}건 · 미완료 {kpi['미완료_건수']}건",
+                  border_color=C["orange"])
     with c4:
         _kpi_card("총 고장건수", f"{kpi['총_고장건수']}건",
                   border_color=C["purple"])
@@ -383,6 +415,26 @@ def 페이지_요약대시보드() -> None:
 
     # 제대별 MTTR 수평 막대
     _section("제대별 평균 수리시간 (MTTR) 비교")
+
+    # 제대별 MTTR + 완료/미완료 건수 병기 (0-1: 우측절단 편향 노출용)
+    제대MTTR = 제대별_MTTR(df)
+    if not 제대MTTR.empty:
+        표 = 제대MTTR.rename(columns={"MTTR_h": "평균 MTTR(h)"})
+        st.dataframe(
+            표,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "평균 MTTR(h)": st.column_config.NumberColumn("평균 MTTR(h)", format="%.1f"),
+                "완료건수":     st.column_config.NumberColumn("완료건수", width="small"),
+                "미완료건수":   st.column_config.NumberColumn("미완료건수", width="small"),
+            },
+        )
+        st.caption(
+            f"🟠 {배지_문구}  ·  MTTR은 완료건만 평균에 반영 "
+            "(미완료 우측절단 미처리 — Phase 0-4 Kaplan-Meier 예정)"
+        )
+
     mttr_df = 체계별_MTTR(df)
     if mttr_df.empty:
         st.plotly_chart(_빈_차트(), use_container_width=True)

@@ -5,7 +5,7 @@ CRUD 및 분석 지표 계산 모듈
   1. 입력     - 고장이력 단건 저장, 기존 레코드 수정
   2. 조회     - 전체/필터 조회, 단건 조회
   3. 삭제     - 단건 삭제
-  4. 분석     - MTBF, MTTR, Ao(가용도) 계산
+  4. 분석     - MTBF, MTTR, Ai(고유가용도) 계산
   5. 집계     - 파레토, 월별 트렌드, 제대별 비교, KPI 요약
 
 반환 타입:
@@ -232,11 +232,18 @@ def MTBF_계산(df: pd.DataFrame, 관측기간_h: Optional[float] = None) -> flo
     return round(관측기간_h / 건수, 2)
 
 
-def 가용도_계산(mtbf: float, mttr: Optional[float]) -> Optional[float]:
+def 고유가용도_Ai_계산(mtbf: float, mttr: Optional[float]) -> Optional[float]:
     """
-    운용 가용도(Ao) 계산.
+    고유가용도(Ai, Inherent Availability) 계산.
 
-    Ao = MTBF / (MTBF + MTTR)
+    Ai = MTBF / (MTBF + MTTR)  — 설계단계 고유가용도.
+
+    주의: 이 수식은 예방정비·행정군수지연(ALDT)을 포함하지 않으므로
+    운용가용도(Ao)가 아니다. (알려진 오류 #1 정정: 기존 라벨 "Ao" → "Ai")
+    운용가용도 Ao = MTBM / (MTBM + MDT)는 ALDT/MDT 필드 도입 후
+    Phase 0-4에서 별도 산출한다 (결측 시 None, 억지 계산 금지).
+    근거: 방위사업청 「무기체계 RAM 업무지침」(2018).
+
     MTTR가 None(수리완료 데이터 없음)이거나 분모가 0이면 None 반환.
     """
     if mttr is None:
@@ -259,25 +266,34 @@ def KPI_요약(df: pd.DataFrame, 관측기간_h: Optional[float] = None) -> dict
     -------
     dict
         {
-          "총_고장건수": int,
-          "미완료_건수": int,
-          "MTBF_h":      float,   # 시간 단위
-          "MTTR_h":      float,   # 시간 단위
-          "가용도_Ao":   float,   # 0~1 사이 소수
+          "총_고장건수":   int,
+          "미완료_건수":   int,
+          "MTBF_h":        float,   # 시간 단위
+          "MTTR_h":        float,   # 시간 단위 (수리완료 건 평균)
+          "MTTR_완료건수": int,     # MTTR 평균에 반영된 완료 건수
+          "가용도_Ai":     float,   # 0~1 사이 소수 (고유가용도)
         }
     """
     mtbf = MTBF_계산(df, 관측기간_h)
     mttr = MTTR_계산(df)
-    ao   = 가용도_계산(mtbf, mttr)
+    ai   = 고유가용도_Ai_계산(mtbf, mttr)
 
     미완료 = df[df["처리상태"] != "수리완료"]
 
+    if df.empty:
+        mttr_완료건수 = 0
+    else:
+        mttr_완료건수 = int(
+            ((df["처리상태"] == "수리완료") & df["수리소요시간_h"].notna()).sum()
+        )
+
     return {
-        "총_고장건수": len(df),
-        "미완료_건수": len(미완료),
-        "MTBF_h":      mtbf,
-        "MTTR_h":      mttr,
-        "가용도_Ao":   ao,
+        "총_고장건수":   len(df),
+        "미완료_건수":   len(미완료),
+        "MTBF_h":        mtbf,
+        "MTTR_h":        mttr,
+        "MTTR_완료건수": mttr_완료건수,
+        "가용도_Ai":     ai,
     }
 
 
@@ -341,6 +357,47 @@ def 파레토_분석(df: pd.DataFrame, 기준컬럼: str = "고장유형") -> pd
     freq["비율_%"]    = (freq["건수"] / 전체 * 100).round(1)
     freq["누적비율_%"] = freq["비율_%"].cumsum().round(1)
     return freq
+
+
+def 제대별_MTTR(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    제대구분별 평균 수리시간(MTTR)과 완료/미완료 건수를 병기한다.
+
+    - MTTR_h    : 해당 제대의 '수리완료' 건 중 수리소요시간_h 평균.
+    - 완료건수  : 처리상태 == '수리완료' 이고 수리소요시간_h 가 유효한 건수.
+    - 미완료건수: 처리상태 != '수리완료' 건수.
+
+    주의(알려진 오류 #3): 현재 MTTR은 완료건만 평균에 반영하므로
+    우측절단(미완료 수리건 누락) 편향으로 MTTR 과소·Ai 과대 가능성이 있다.
+    Phase 0-4에서 lifelines Kaplan-Meier로 절단 처리 예정.
+    완료/미완료 건수를 병기하는 것은 이 편향을 화면에서 드러내기 위함이다.
+
+    Returns
+    -------
+    pd.DataFrame
+        columns: ["제대구분", "MTTR_h", "완료건수", "미완료건수"]
+    """
+    cols = ["제대구분", "MTTR_h", "완료건수", "미완료건수"]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+
+    rows = []
+    for 제대, g in df.groupby("제대구분"):
+        완료 = g[(g["처리상태"] == "수리완료") & g["수리소요시간_h"].notna()]
+        미완료 = g[g["처리상태"] != "수리완료"]
+        mttr = round(완료["수리소요시간_h"].mean(), 2) if not 완료.empty else None
+        rows.append({
+            "제대구분":   제대,
+            "MTTR_h":     mttr,
+            "완료건수":   int(len(완료)),
+            "미완료건수": int(len(미완료)),
+        })
+
+    return (
+        pd.DataFrame(rows, columns=cols)
+        .sort_values("제대구분")
+        .reset_index(drop=True)
+    )
 
 
 def 체계별_MTTR(df: pd.DataFrame) -> pd.DataFrame:
