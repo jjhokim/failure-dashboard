@@ -1,4 +1,7 @@
 data/failure.db
+data/synth/
+results/
+cache/
 __pycache__/
 *.pyc
 .env
