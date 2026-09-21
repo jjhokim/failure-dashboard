@@ -21,7 +21,7 @@ from typing import Optional
 import pandas as pd
 
 from backend.database import get_connection
-from backend.models import 고장이력
+from backend.models import BIT이벤트, LCN노드, 고장이력, 장비
 
 
 # ===========================================================================
@@ -46,8 +46,10 @@ def 고장이력_저장(record: 고장이력) -> int:
     sql = """
         INSERT INTO 고장이력 (
             제대구분, 발생일시, 체계명, LRU명, 고장유형, 고장증상,
-            수리시작시간, 수리완료시간, 정비조치내용, 처리상태, 등록일시
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            수리시작시간, 수리완료시간, 정비조치내용, 처리상태, 등록일시,
+            op_hours_at_failure, aldt_hours, mdt_hours, lcn,
+            effect_class, narrative, system_id, source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     params = (
         record.제대구분,
@@ -61,6 +63,15 @@ def 고장이력_저장(record: 고장이력) -> int:
         record.정비조치내용,
         record.처리상태,
         _fmt_dt(record.등록일시),
+        # --- Phase 0-2 확장 필드 ---
+        record.op_hours_at_failure,
+        record.aldt_hours,
+        record.mdt_hours,
+        record.lcn,
+        record.effect_class,
+        record.narrative,
+        record.system_id,
+        record.source,
     )
     with get_connection() as conn:
         cursor = conn.execute(sql, params)
@@ -463,6 +474,90 @@ def 불가동_추세(df: pd.DataFrame) -> pd.DataFrame:
               .sort_values("연월")
     )
     return result
+
+
+# ===========================================================================
+# 6. 확장 테이블 CRUD (Phase 0-2: systems / lcn_tree / bit_events)
+# ===========================================================================
+#
+# 스키마를 실제로 사용·검증 가능하게 하는 최소 입출력 함수.
+# 본격적인 활용(운용시간 기반 MTBF, LCN 구조거리, BIT 조인)은
+# Phase 0-4 / Phase 5에서 이 함수들 위에 구현한다.
+
+def 장비_저장(장비목록: "장비 | list[장비]") -> int:
+    """
+    systems(장비 모집단) 레코드를 일괄 저장한다 (system_id 기준 UPSERT).
+    단건 또는 리스트를 받아 저장 건수를 반환한다.
+    """
+    목록 = list(장비목록) if isinstance(장비목록, (list, tuple)) else [장비목록]
+    if not 목록:
+        return 0
+    sql = """
+        INSERT OR REPLACE INTO systems
+            (system_id, system_type, echelon, commissioned_at, cumulative_op_hours)
+        VALUES (?, ?, ?, ?, ?)
+    """
+    with get_connection() as conn:
+        conn.executemany(sql, [
+            (s.system_id, s.system_type, s.echelon,
+             _fmt_dt(s.commissioned_at), s.cumulative_op_hours)
+            for s in 목록
+        ])
+    return len(목록)
+
+
+def 장비_전체조회() -> pd.DataFrame:
+    """systems 테이블 전체를 DataFrame으로 반환한다."""
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM systems ORDER BY system_id", conn)
+
+
+def LCN트리_저장(노드목록: "LCN노드 | list[LCN노드]") -> int:
+    """lcn_tree 레코드를 일괄 저장한다 (lcn 기준 UPSERT). 저장 건수 반환."""
+    목록 = list(노드목록) if isinstance(노드목록, (list, tuple)) else [노드목록]
+    if not 목록:
+        return 0
+    sql = """
+        INSERT OR REPLACE INTO lcn_tree (lcn, parent_lcn, level, description)
+        VALUES (?, ?, ?, ?)
+    """
+    with get_connection() as conn:
+        conn.executemany(
+            sql, [(n.lcn, n.parent_lcn, n.level, n.description) for n in 목록]
+        )
+    return len(목록)
+
+
+def LCN트리_전체조회() -> pd.DataFrame:
+    """lcn_tree 테이블 전체를 DataFrame으로 반환한다."""
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM lcn_tree ORDER BY lcn", conn)
+
+
+def BIT이벤트_저장(이벤트목록: "BIT이벤트 | list[BIT이벤트]") -> int:
+    """
+    bit_events 레코드를 일괄 저장한다 (event_id 자동증가). 저장 건수 반환.
+    ※ R3: BIT는 탐지 채널 입력이 아니라 Phase 5 조인(LCN·시각)용이다.
+    """
+    목록 = list(이벤트목록) if isinstance(이벤트목록, (list, tuple)) else [이벤트목록]
+    if not 목록:
+        return 0
+    sql = """
+        INSERT INTO bit_events (system_id, lcn, bit_code, occurred_at)
+        VALUES (?, ?, ?, ?)
+    """
+    with get_connection() as conn:
+        conn.executemany(
+            sql,
+            [(e.system_id, e.lcn, e.bit_code, _fmt_dt(e.occurred_at)) for e in 목록],
+        )
+    return len(목록)
+
+
+def BIT이벤트_전체조회() -> pd.DataFrame:
+    """bit_events 테이블 전체를 DataFrame으로 반환한다."""
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM bit_events ORDER BY occurred_at", conn)
 
 
 # ===========================================================================
