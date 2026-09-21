@@ -79,6 +79,44 @@ def 고장이력_저장(record: 고장이력) -> int:
         return cursor.lastrowid
 
 
+_고장이력_삽입컬럼: list[str] = [
+    "제대구분", "발생일시", "체계명", "LRU명", "고장유형", "고장증상",
+    "수리시작시간", "수리완료시간", "정비조치내용", "처리상태", "등록일시",
+    "op_hours_at_failure", "aldt_hours", "mdt_hours", "lcn",
+    "effect_class", "narrative", "system_id", "source",
+]
+
+
+def 고장이력_DataFrame저장(표준df: pd.DataFrame, source: str = "import") -> int:
+    """
+    표준화된 DataFrame(adapters.표준화 결과)을 고장이력에 일괄 저장한다.
+
+    - 없는 컬럼은 NULL로 채운다. 처리상태 결측은 '미해결', 등록일시는 현재시각.
+    - 모든 레코드의 source를 지정값(기본 'import')으로 기록한다.
+    반환: 저장 건수.
+    """
+    if 표준df is None or 표준df.empty:
+        return 0
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    values: list[tuple] = []
+    for _, r in 표준df.iterrows():
+        d = {c: (None if (c not in 표준df.columns or pd.isna(r[c])) else r[c])
+             for c in _고장이력_삽입컬럼}
+        d["처리상태"] = d.get("처리상태") or "미해결"
+        d["등록일시"] = now
+        d["source"]  = source
+        values.append(tuple(d[c] for c in _고장이력_삽입컬럼))
+
+    placeholders = ", ".join(["?"] * len(_고장이력_삽입컬럼))
+    cols = ", ".join(_고장이력_삽입컬럼)
+    with get_connection() as conn:
+        conn.executemany(
+            f"INSERT INTO 고장이력 ({cols}) VALUES ({placeholders})", values
+        )
+    return len(values)
+
+
 def 고장이력_수정(id: int, 수정내용: dict) -> None:
     """
     기존 레코드를 부분 수정한다.

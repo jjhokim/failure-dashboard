@@ -17,12 +17,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from backend import adapters
 from backend.database import init_db
 from backend.models import (
     LRU_목록, 고장이력, 고장유형, 처리상태, 제대구분, 체계명,
 )
 from backend.crud import (
     KPI_요약,
+    고장이력_DataFrame저장,
     고장이력_단건조회,
     고장이력_삭제,
     고장이력_수정,
@@ -294,6 +296,40 @@ def _parse_dt_text(text: str, 오류: list) -> datetime | None:
 # 사이드바
 # ---------------------------------------------------------------------------
 
+def _사이드바_가져오기() -> None:
+    """사이드바 CSV/Excel import UI (Phase 0-5). st.sidebar 컨텍스트 내에서 호출."""
+    with st.expander("📥 데이터 가져오기 (CSV/Excel)"):
+        up = st.file_uploader(
+            "파일 선택", type=["csv", "xlsx", "xls"],
+            label_visibility="collapsed", key="import_uploader",
+        )
+        if up is None:
+            st.caption("외부 컬럼명은 자동 매핑됩니다 (한국어·영어 별칭 지원).")
+            return
+
+        try:
+            raw = adapters.읽기(up, up.name)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"파일 읽기 실패: {e}")
+            return
+
+        표준df, 누락, 미매핑 = adapters.표준화(raw)
+
+        if 미매핑:
+            st.warning("무시된(매핑 실패) 컬럼: " + ", ".join(map(str, 미매핑)))
+        if 누락:
+            st.error("필수 컬럼 누락: " + ", ".join(누락))
+            return
+
+        st.caption(f"미리보기 (총 {len(표준df)}행 중 상위 5행)")
+        st.dataframe(표준df.head(5), use_container_width=True, hide_index=True)
+        if st.button(f"{len(표준df)}건 가져오기", type="primary",
+                     use_container_width=True):
+            n = 고장이력_DataFrame저장(표준df, source="import")
+            st.success(f"{n}건 가져오기 완료 (출처=import).")
+            st.rerun()
+
+
 def _사이드바() -> str:
     with st.sidebar:
         # 타이틀 — 네이티브 컴포넌트 사용 (HTML 블록 인코딩 문제 방지)
@@ -330,6 +366,9 @@ def _사이드바() -> str:
         )
         st.caption(f"🟠 {배지_문구}")
         st.caption(f"미완료 {kpi['미완료_건수']}건 / 전체 {kpi['총_고장건수']}건")
+
+        st.divider()
+        _사이드바_가져오기()
 
         st.divider()
         st.caption("IPS 보조 도구 v0.1 · 로컬 전용")
