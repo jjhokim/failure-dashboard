@@ -240,6 +240,61 @@ def score_clusters(
 
 
 # ===========================================================================
+# 치명도 산식 변형 (사전등록 v2 §4)
+# ===========================================================================
+
+def rescore_with_variant(
+    table: pd.DataFrame,
+    variant: str = "S0",
+    weights: dict[str, float] | None = None,
+) -> pd.DataFrame:
+    """
+    score_clusters() 결과의 **치명도 축만 바꿔** 점수·순위를 재계산한다.
+
+    | 변형 | 치명도 정의 |
+    |------|-------------|
+    | S0   | 현행 합산값 (변경 없음) |
+    | S1   | S0를 규모(건수)에 선형 잔차화한 값 (crit ~ size 회귀 잔차) |
+    | S2   | 강도형: S0 / 건수  (합산 대신 건당 평균) |
+
+    군집 결과·라벨은 그대로 두고 산식만 바꾸므로, 세 변형이 동일 조건에서 비교된다.
+    """
+    if table.empty:
+        return table.copy()
+
+    w = dict(DEFAULT_WEIGHTS if weights is None else weights)
+    t = table.copy()
+
+    size = t["건수"].to_numpy(dtype=float)
+    crit = t["치명도_obs"].to_numpy(dtype=float)
+
+    if variant == "S1":
+        if len(t) >= 3 and np.std(size) > 1e-12:
+            기울기, 절편 = np.polyfit(size, crit, 1)
+            crit_new = crit - (기울기 * size + 절편)
+        else:
+            crit_new = crit
+    elif variant == "S2":
+        crit_new = np.divide(crit, np.where(size > 0, size, 1.0))
+    elif variant == "S0":
+        crit_new = crit
+    else:
+        raise ValueError(f"알 수 없는 변형: {variant}")
+
+    t["치명도_obs"] = crit_new
+    t["z_crit"] = standardize(crit_new)
+    t["점수"] = (
+        w.get("size", 0.0) * t["z_size"].to_numpy(dtype=float)
+        + w.get("trend", 0.0) * t["z_trend"].to_numpy(dtype=float)
+        + w.get("crit", 0.0) * t["z_crit"].to_numpy(dtype=float)
+    )
+
+    t = t.sort_values("점수", ascending=False).reset_index(drop=True)
+    t["순위"] = np.arange(1, len(t) + 1)
+    return t
+
+
+# ===========================================================================
 # 민감도 분석
 # ===========================================================================
 

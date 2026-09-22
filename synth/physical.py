@@ -64,6 +64,22 @@ def _near_lcn(rep: str, rng: np.random.RandomState) -> str:
     return ".".join(parts)
 
 
+def _time_window(config: SynthConfig, span: float) -> float:
+    """
+    군집 시각 밀집폭(일). delta가 클수록 좁아진다.
+
+    모드 (사전등록 v2 Arm B):
+      - "legacy": max(1.0, span×0.05×(1−δ) + 1.0)
+                  δ=1에서 1.0일로 수렴 → 시간 채널이 거의 완벽한 판별자가 되어
+                  채널 비교(C4)를 왜곡한다는 의심을 받은 기존 동작.
+      - "floor" : span×0.05×(1−δ) + span×0.01
+                  δ=1에서도 span의 1%(365일 기준 3.65일) 폭을 유지한다.
+    """
+    if getattr(config, "time_window_mode", "legacy") == "floor":
+        return span * 0.05 * (1 - config.delta) + span * 0.01
+    return max(1.0, span * 0.05 * (1 - config.delta) + 1.0)
+
+
 def _cluster_sizes(
     n_signal: int, k: int, dist: str, rng: np.random.RandomState
 ) -> list[int]:
@@ -137,7 +153,7 @@ def build_physical_states(
             env = cl["rep_env"] if sig_env else ENVIRONMENTS[rng.randint(len(ENVIRONMENTS))]
 
             if sig_time:
-                window = max(1.0, span * 0.05 * (1 - config.delta) + 1.0)
+                window = _time_window(config, span)
                 day = cl["t_star"] + rng.uniform(-window, window)
             else:
                 day = rng.uniform(0, span)

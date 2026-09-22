@@ -37,6 +37,12 @@ class SynthConfig:
     # 난수 시드 (전역 상태 비의존; 항상 명시)
     seed: int = 0
 
+    # 시각 밀집폭 모드 (사전등록 v2 Arm B)
+    #   "legacy" : window = max(1.0, span×0.05×(1−δ) + 1.0)   → δ=1에서 1.0일
+    #   "floor"  : window = span×0.05×(1−δ) + span×0.01       → δ=1에서 span의 1%
+    # 기본값은 legacy로 두어 1차 실험 재현성을 보존한다.
+    time_window_mode: str = "legacy"
+
     # 도메인 크기
     n_lcn_leaves: int = 60
     time_span_days: int = 365
