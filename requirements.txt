@@ -9,6 +9,8 @@ scikit-learn>=1.6.0
 scipy>=1.11.0
 pyyaml>=6.0
 sentence-transformers>=3.0.0
+tabulate>=0.9.0
+matplotlib>=3.8.0
 pytest>=8.0.0
 
 # 군집화는 sklearn.cluster.HDBSCAN(metric='precomputed')을 사용한다.
