@@ -72,11 +72,18 @@ def _time_window(config: SynthConfig, span: float) -> float:
       - "legacy": max(1.0, span×0.05×(1−δ) + 1.0)
                   δ=1에서 1.0일로 수렴 → 시간 채널이 거의 완벽한 판별자가 되어
                   채널 비교(C4)를 왜곡한다는 의심을 받은 기존 동작.
-      - "floor" : span×0.05×(1−δ) + span×0.01
-                  δ=1에서도 span의 1%(365일 기준 3.65일) 폭을 유지한다.
+      - "floor" : span×0.05×(1−δ) + floor
+                  floor는 time_window_floor_days(일). 미지정 시 span의 1%
+                  (365일 기준 3.65일). 민감도 분석에서 이 값을 스윕한다.
+
+    ※ 문헌 조사 결과, 공통원인 고장(CCF)의 시간 창은 표준화된 고정값이 아니라
+      임무·점검주기에 따라 '선택하는' 값이다(NRC CCF 정의). 따라서 단일 정답
+      수치가 존재하지 않으며, 결론의 창 의존성을 민감도로 보고하는 것이 옳다.
     """
     if getattr(config, "time_window_mode", "legacy") == "floor":
-        return span * 0.05 * (1 - config.delta) + span * 0.01
+        floor = getattr(config, "time_window_floor_days", None)
+        floor = span * 0.01 if floor is None else float(floor)
+        return span * 0.05 * (1 - config.delta) + floor
     return max(1.0, span * 0.05 * (1 - config.delta) + 1.0)
 
 

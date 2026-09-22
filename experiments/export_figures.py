@@ -203,6 +203,51 @@ def fig_c6_variants() -> None:
                  "S0 = 현행 유지")
 
 
+def fig_window_sensitivity() -> None:
+    p = RESULTS / "window_sensitivity" / "sweep.csv"
+    if not p.exists():
+        return
+    d = pd.read_csv(p, encoding="utf-8-sig").sort_values("floor_days")
+
+    fig, ax = plt.subplots(figsize=(6.6, 3.9))
+    ax.plot(d["floor_days"], d["fused_mean"], marker="o", color=C_ACC,
+            linewidth=2, label="3채널 융합")
+    ax.plot(d["floor_days"], d["time_mean"], marker="s", color=C_SUB,
+            linewidth=2, label="시간 채널 단독")
+    ax.plot(d["floor_days"], d["sem_mean"], marker="^", color=C_MAIN,
+            linewidth=1.2, linestyle="--", label="의미 단독")
+    ax.plot(d["floor_days"], d["lcn_mean"], marker="v", color="gray",
+            linewidth=1.2, linestyle=":", label="구조 단독")
+
+    이긴다 = d[d["fusion_wins"]]
+    if not 이긴다.empty:
+        x = float(이긴다["floor_days"].min())
+        ax.axvline(x, color="crimson", linestyle="--", linewidth=1)
+        # '≈' 등 일부 기호는 Malgun Gothic에 글리프가 없어 두부(□)로 렌더링된다.
+        ax.annotate(f"융합 우위 시작\n약 {x}일", xy=(x, 0.45),
+                    xytext=(x * 1.25, 0.34), fontsize=8, color="crimson")
+
+    ax.set_xscale("log")
+    ax.set_xticks(d["floor_days"])
+    ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+    ax.set_xlabel("가정한 공통원인 시간 밀집폭 (일, 로그축)")
+    ax.set_ylabel("ARI")
+    ax.set_title("결론은 시간 밀집폭 가정에 의존한다 (δ=1.0, 8시드)")
+    ax.legend(fontsize=8, loc="center right")
+    ax.grid(alpha=0.3)
+    _save(fig, "fig5_window_sensitivity.png")
+
+    t = d[["floor_days", "fused_mean", "time_mean",
+           "diff_mean", "diff_lo", "diff_hi", "fusion_wins"]].copy()
+    t.columns = ["밀집폭(일)", "융합 ARI", "시간단독 ARI",
+                 "차이", "CI 하한", "CI 상한", "융합 우위"]
+    t["융합 우위"] = t["융합 우위"].map({True: "예", False: "아니오"})
+    _write_table(t.round(3), "table5_window_sensitivity",
+                 "표 5. 시간 밀집폭 민감도 (탐색적 분석, 8시드). "
+                 "의미·구조 단독은 전 구간 불변(0.232/0.197)으로, "
+                 "스윕이 시간 차원만 조작했음을 확인")
+
+
 def main() -> None:
     print("[그림·표 추출]")
     summary = None
@@ -221,6 +266,7 @@ def main() -> None:
 
     fig_legacy_vs_floor()
     fig_c6_variants()
+    fig_window_sensitivity()
     print(f"[완료] {OUT.relative_to(_ROOT)}")
 
 

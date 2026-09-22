@@ -43,6 +43,10 @@ class SynthConfig:
     # 기본값은 legacy로 두어 1차 실험 재현성을 보존한다.
     time_window_mode: str = "legacy"
 
+    # floor 모드의 하한 폭(일). None이면 span의 1%를 쓴다(v2 Arm B 기본값).
+    # 민감도 분석에서 이 값을 스윕한다.
+    time_window_floor_days: float | None = None
+
     # 도메인 크기
     n_lcn_leaves: int = 60
     time_span_days: int = 365
