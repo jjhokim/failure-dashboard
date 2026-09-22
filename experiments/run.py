@@ -71,6 +71,19 @@ def _build(cfg: dict, delta: float, seed: int, embedder):
     return res, ch
 
 
+def _delay_cluster_fn(res: dict, weights: dict, min_cluster_size: int, embedder):
+    """
+    Detection Delay용 부분 데이터 군집화 함수를 만든다.
+
+    슬라이딩(누적) 윈도우마다 3채널 거리행렬을 다시 만들고 군집화한다.
+    truth·라벨을 참조하지 않는다.
+    """
+    def _fn(sub_obs):
+        ch = channels.build_channels(sub_obs, embedder=embedder, use_cache=False)
+        return cluster(fusion.fuse(ch, weights), min_cluster_size)
+    return _fn
+
+
 def evaluate_once(
     res: dict,
     ch: dict,
@@ -79,6 +92,9 @@ def evaluate_once(
     k: int = 5,
     permute_labels: bool = False,
     permute_seed: int = 0,
+    embedder=None,
+    with_delay: bool = False,
+    delay_steps: int = 8,
 ) -> dict:
     """한 조건(가중치·m)에 대한 지표 일괄 산출."""
     obs, truth = res["obs"], res["truth"]
@@ -111,6 +127,19 @@ def evaluate_once(
         out["corr_size_crit"] = float(표["건수"].corr(표["치명도_obs"]))
         out["corr_size_trend"] = float(표["건수"].corr(표["추세"]))
         out["corr_trend_crit"] = float(표["추세"].corr(표["치명도_obs"]))
+
+    # Detection Delay (사전등록 §6) — 순도 0.8 최초 도달까지의 누적 고장 건수
+    if with_delay and embedder is not None and not permute_labels:
+        dd = M.detection_delay(
+            obs, truth,
+            _delay_cluster_fn(res, weights, min_cluster_size, embedder),
+            purity_target=0.8, n_steps=delay_steps,
+        )
+        도달 = [v for v in dd["delays"].values() if v is not None]
+        out["delay_reach_rate"] = dd["reach_rate"]
+        # 미도달은 NA로 두고 도달 건에 대해서만 평균(사전등록 §6)
+        out["delay_mean_records"] = float(np.mean(도달)) if 도달 else None
+        out["delay_min_records"] = int(min(도달)) if 도달 else None
     return out
 
 
@@ -174,10 +203,16 @@ def run(
     rows: list[dict] = []
 
     # 2) δ 스윕 (기본 가중치) — 단조성 C3, 무주입 C1
+    #    Detection Delay는 누적 재군집화라 비용이 크므로 이 조건에서만 산출한다.
+    with_delay = bool(cfg.get("ablation", {}).get("detection_delay", True))
     for delta in cfg["ablation"]["deltas"]:
         for seed in seed_list:
             res, ch = _build(cfg, delta, seed, embedder)
-            r = evaluate_once(res, ch, cfg["detect"]["default_weights"], m, k=k)
+            r = evaluate_once(
+                res, ch, cfg["detect"]["default_weights"], m, k=k,
+                embedder=embedder,
+                with_delay=with_delay and delta > 0,  # δ=0은 정답 군집이 없음
+            )
             rows.append({"조건": "delta_sweep", "delta": delta, "seed": seed,
                          "channels": "sem+lcn+time", **r})
 

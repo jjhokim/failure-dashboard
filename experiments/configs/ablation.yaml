@@ -22,6 +22,7 @@ detect:
     time: 0.25
 
 ablation:
+  detection_delay: true           # δ 스윕(융합 조건)에서만 산출. 누적 재군집화라 비용 큼
   deltas: [0.0, 0.25, 0.5, 0.75, 1.0]
   channel_sets:                   # 가중치 0 = 채널 off (7조합)
     sem:            {sem: 1.0, lcn: 0.0,  time: 0.0}

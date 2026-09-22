@@ -159,6 +159,36 @@ def test_detection_delay_도달과_미도달():
 # CLI 인자
 # ---------------------------------------------------------------------------
 
+def test_evaluate_once_detection_delay_배선():
+    """
+    후보작업 3: Detection Delay가 ablation 루프(evaluate_once)에 연결되었는지 확인.
+    오프라인 더미 임베더로 배선만 검증한다.
+    """
+    import warnings
+
+    from detect import channels
+    from experiments.run import DEFAULT_CONFIG, _build, evaluate_once, load_config
+
+    warnings.filterwarnings("ignore")
+    cfg = load_config(DEFAULT_CONFIG)
+    cfg["data"] = {**cfg["data"], "n_records": 100, "n_clusters": 3}
+    emb = channels.HashingEmbedder()
+    res, ch = _build(cfg, 1.0, 902, emb)
+
+    # with_delay=False면 지연 컬럼이 없어야 한다
+    없음 = evaluate_once(res, ch, cfg["detect"]["default_weights"], 5)
+    assert "delay_reach_rate" not in 없음
+
+    있음 = evaluate_once(res, ch, cfg["detect"]["default_weights"], 5,
+                        embedder=emb, with_delay=True, delay_steps=4)
+    assert "delay_reach_rate" in 있음
+    assert 0.0 <= 있음["delay_reach_rate"] <= 1.0
+    # 도달했다면 누적 건수는 양수이고 전체 건수를 넘지 않는다
+    if 있음["delay_mean_records"] is not None:
+        assert 0 < 있음["delay_mean_records"] <= len(res["obs"])
+        assert 있음["delay_min_records"] <= 있음["delay_mean_records"]
+
+
 def test_parse_seeds():
     assert parse_seeds("0-7") == list(range(8))
     assert parse_seeds("0,2,5") == [0, 2, 5]
