@@ -40,3 +40,7 @@ class SynthConfig:
     # 도메인 크기
     n_lcn_leaves: int = 60
     time_span_days: int = 365
+
+    # 장비 모집단 (고장률 분모 정의용 — Phase 0-2 systems 테이블 대응)
+    n_systems: int = 12                     # 체계별 장비 대수 합
+    op_hours_per_day: float = 8.0           # 장비 1대의 1일 평균 운용시간

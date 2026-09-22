@@ -88,6 +88,50 @@ def test_effect_class_생성되고_라벨의_결정론적함수가_아님():
     assert 섞인_군집 >= 1
 
 
+def test_systems_모집단_및_운용시간_생성():
+    """
+    Phase 3 λ_obs = 건수/Σ운용시간 을 위해 장비 모집단과 고장시점 운용시간이
+    생성되어야 한다(스펙 §0-2 systems 대응).
+    """
+    cfg = SynthConfig(n_records=150, n_clusters=3, delta=0.5, seed=4, n_systems=9)
+    res = generate(cfg, save=False)
+
+    systems, obs = res["systems"], res["obs"]
+    assert len(systems) == 9
+    assert (systems["cumulative_op_hours"] > 0).all()
+    assert res["counts"]["total_op_hours"] == pytest.approx(
+        float(systems["cumulative_op_hours"].sum())
+    )
+
+    # 모든 레코드가 장비에 귀속되고 운용시간이 부여됨
+    assert obs["system_id"].notna().all()
+    assert obs["op_hours_at_failure"].notna().all()
+    assert (obs["op_hours_at_failure"] >= 0).all()
+    # 귀속 장비의 체계는 레코드 체계와 일치해야 함
+    매핑 = systems.set_index("system_id")["system_type"]
+    assert (obs["system_id"].map(매핑) == obs["체계명"]).all()
+
+
+def test_cluster_size_dist_geometric은_크기가_변동():
+    """
+    uniform은 모든 군집을 거의 같은 크기로 만들어 규모 축의 변별력이 사라진다.
+    실험은 geometric을 쓰며, 크기 변동계수가 uniform보다 뚜렷이 커야 한다.
+    """
+    import numpy as np
+
+    def cv(dist):
+        res = generate(
+            SynthConfig(n_records=400, n_clusters=5, noise_ratio=0.2,
+                        delta=1.0, seed=0, cluster_size_dist=dist),
+            save=False,
+        )
+        t = res["truth"]
+        sizes = t[t["cluster_id"] != -1]["cluster_id"].value_counts().to_numpy()
+        return float(np.std(sizes) / np.mean(sizes))
+
+    assert cv("geometric") > cv("uniform") + 0.2
+
+
 def test_생성물_저장(tmp_path):
     cfg = SynthConfig(n_records=80, n_clusters=3, delta=0.5, seed=0)
     res = generate(cfg, out_dir=tmp_path, save=True)
