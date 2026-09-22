@@ -79,7 +79,10 @@ def _delay_cluster_fn(res: dict, weights: dict, min_cluster_size: int, embedder)
     truth·라벨을 참조하지 않는다.
     """
     def _fn(sub_obs):
-        ch = channels.build_channels(sub_obs, embedder=embedder, use_cache=False)
+        # use_cache=True: 부분 데이터의 임베딩은 (텍스트 목록, 모델)로 키가 잡히므로
+        # 동일 (δ, seed)의 같은 단계는 채널 가중치가 달라도 재사용된다.
+        # 채널 조합별 지연 측정 시 비용이 조합 수만큼 배가되는 것을 막는다.
+        ch = channels.build_channels(sub_obs, embedder=embedder, use_cache=True)
         return cluster(fusion.fuse(ch, weights), min_cluster_size)
     return _fn
 
