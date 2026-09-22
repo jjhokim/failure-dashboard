@@ -23,7 +23,10 @@ from backend.models import (
     LRU_목록, 고장이력, 고장유형, 처리상태, 제대구분, 체계명,
 )
 from backend.crud import (
+    BIT_정비기록_조인,
+    BIT이벤트_전체조회,
     KPI_요약,
+    LCN_파레토,
     고장이력_DataFrame저장,
     고장이력_단건조회,
     고장이력_삭제,
@@ -340,7 +343,8 @@ def _사이드바() -> str:
 
         메뉴 = st.radio(
             "메뉴",
-            ["📊 요약 대시보드", "✏️ 고장 입력", "📋 고장 현황", "🔍 분석"],
+            ["📊 요약 대시보드", "✏️ 고장 입력", "📋 고장 현황", "🔍 분석",
+             "🧩 공통원인 후보", "🧪 실험 결과", "🔗 BIT 연결"],
             label_visibility="collapsed",
         )
 
@@ -778,6 +782,23 @@ def 페이지_분석() -> None:
 
     st.divider()
 
+    # LCN 상위 노드별 파레토 (Phase 5)
+    _section("LCN 상위 노드별 파레토")
+    if "lcn" not in df.columns or df["lcn"].notna().sum() == 0:
+        st.info("LCN 데이터가 없습니다. 합성데이터 생성 또는 import 후 확인하세요.")
+    else:
+        lv = st.slider("LCN 계층 깊이", 1, 4, 2, key="lcn_level")
+        p_lcn = LCN_파레토(df, level=lv)
+        if p_lcn.empty:
+            st.plotly_chart(_빈_차트(), use_container_width=True)
+        else:
+            st.plotly_chart(
+                _파레토_차트(p_lcn.rename(columns={"LCN노드": "LCN"}), "LCN"),
+                use_container_width=True,
+            )
+
+    st.divider()
+
     # 제대별 고장현황 비교
     _section("제대별 고장현황 비교 (처리상태)")
     현황_df = 제대별_고장현황(df_all)
@@ -859,6 +880,212 @@ def _파레토_차트(df: pd.DataFrame, 기준컬럼: str) -> go.Figure:
 
 
 # ---------------------------------------------------------------------------
+# 탭 5: 공통원인 후보 (Phase 5)
+# ---------------------------------------------------------------------------
+
+def 페이지_공통원인후보() -> None:
+    _section("공통원인 후보 탐지 · 우선순위화")
+    st.caption(
+        f"🟠 {배지_문구}  ·  KoSBERT + HDBSCAN 파이프라인 "
+        "(통계 지표 산출은 'AI'로 부르지 않습니다)"
+    )
+
+    df = 고장이력_전체조회()
+    if df.empty or "lcn" not in df.columns or df["lcn"].notna().sum() < 10:
+        st.info(
+            "LCN이 있는 레코드가 부족합니다(10건 이상 필요). "
+            "합성데이터를 생성하거나 LCN 포함 CSV를 import하세요."
+        )
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        w_sem = st.slider("의미 가중치", 0.0, 1.0, 0.5, 0.05)
+    with c2:
+        w_lcn = st.slider("구조 가중치", 0.0, 1.0, 0.25, 0.05)
+    with c3:
+        w_time = st.slider("시간 가중치", 0.0, 1.0, 0.25, 0.05)
+    with c4:
+        m = st.selectbox("min_cluster_size", [5, 8, 12], index=2)
+
+    if w_sem + w_lcn + w_time <= 0:
+        st.error("가중치 합이 0입니다. 최소 한 채널을 켜세요.")
+        return
+
+    사용 = df[df["lcn"].notna()].reset_index(drop=True)
+    if not st.button("탐지 실행", type="primary"):
+        st.caption("가중치를 정한 뒤 [탐지 실행]을 누르세요. "
+                   "최초 실행 시 KoSBERT 임베딩으로 시간이 걸릴 수 있습니다.")
+        return
+
+    with st.spinner("임베딩·군집화 중…"):
+        try:
+            from detect import channels, fusion
+            from detect.cluster import cluster, cluster_stats
+            from prioritize import scoring
+
+            ch = channels.build_channels(사용)
+            labels = cluster(
+                fusion.fuse(ch, {"sem": w_sem, "lcn": w_lcn, "time": w_time}), m
+            )
+            표 = scoring.score_clusters(사용, labels)
+            stats = cluster_stats(labels)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"탐지 실패: {e}")
+            return
+
+    k1, k2 = st.columns(2)
+    with k1:
+        _kpi_card("발견 군집", f"{stats['n_clusters']}개",
+                  sub=f"대상 {len(사용)}건", border_color=C["purple"])
+    with k2:
+        _kpi_card("노이즈 비율", f"{stats['noise_ratio']*100:.1f}%",
+                  sub="단발성 고장", border_color=C["muted"])
+
+    if 표.empty:
+        st.warning("형성된 군집이 없습니다. 가중치나 min_cluster_size를 조정해보세요.")
+        return
+
+    _section("우선순위 순위표")
+    st.dataframe(
+        표[["순위", "군집", "점수", "건수", "추세", "치명도_obs", "대표LCN",
+            "대표문장1", "대표문장2", "대표문장3"]],
+        use_container_width=True, hide_index=True,
+        column_config={
+            "점수": st.column_config.NumberColumn("점수", format="%.3f"),
+            "추세": st.column_config.NumberColumn("추세", format="%.2f"),
+            "치명도_obs": st.column_config.NumberColumn("치명도", format="%.1f"),
+        },
+    )
+    st.caption(
+        "치명도는 관측치 기반 대체값입니다 "
+        "(λ=건수/Σ운용시간, β·α≈EFF 비율). 주입 파라미터는 사용하지 않습니다."
+    )
+
+    _section("군집 상세")
+    선택 = st.selectbox("군집 선택", list(표["군집"]))
+    상세 = 사용[labels == 선택]
+    st.dataframe(
+        상세[["발생일시", "제대구분", "체계명", "LRU명", "lcn", "고장증상", "처리상태"]],
+        use_container_width=True, hide_index=True, height=300,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 탭 6: 실험 결과 (Phase 5)
+# ---------------------------------------------------------------------------
+
+def 페이지_실험결과() -> None:
+    _section("실험 결과 (사전등록 기반)")
+
+    results_dir = Path(__file__).resolve().parent.parent / "results"
+    runs = sorted([p for p in results_dir.glob("*") if p.is_dir()]) \
+        if results_dir.exists() else []
+    if not runs:
+        st.info(
+            "실험 결과가 없습니다. 다음으로 생성하세요:\n\n"
+            "`python -m experiments.run --config experiments/configs/ablation.yaml "
+            "--seeds 0-7 --run-id prereg_8seeds`"
+        )
+        return
+
+    run = st.selectbox("실행 선택", [p.name for p in runs])
+    run_dir = results_dir / run
+
+    summary_path = run_dir / "summary.csv"
+    if not summary_path.exists():
+        st.warning(f"{run}에 summary.csv가 없습니다.")
+        st.write("포함 파일:", [p.name for p in run_dir.glob("*")])
+        return
+
+    s = pd.read_csv(summary_path, encoding="utf-8-sig")
+    st.caption("모든 수치는 시드 집합의 mean±std입니다. 단일 시드 값은 보고하지 않습니다.")
+
+    # δ 스윕
+    sweep = s[s["조건"] == "delta_sweep"].sort_values("delta") if "조건" in s else pd.DataFrame()
+    if not sweep.empty and "ARI_mean" in sweep.columns:
+        _section("주입 강도(δ)별 ARI")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=sweep["delta"], y=sweep["ARI_mean"], mode="lines+markers",
+            error_y=dict(type="data", array=sweep.get("ARI_std"), visible=True),
+            line=dict(color=C["blue"], width=2), marker=dict(size=8), name="ARI",
+        ))
+        fig.update_layout(**_PLOT_LAYOUT, height=320,
+                          xaxis_title="δ (주입 강도)", yaxis_title="ARI")
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 채널 ablation
+    abl = s[s["조건"] == "channel_ablation"] if "조건" in s else pd.DataFrame()
+    if not abl.empty and "ARI_mean" in abl.columns:
+        _section("채널 조합별 ARI (ablation)")
+        a = abl.sort_values("ARI_mean", ascending=True)
+        fig2 = go.Figure(go.Bar(
+            x=a["ARI_mean"], y=a["channels"], orientation="h",
+            error_x=dict(type="data", array=a.get("ARI_std"), visible=True),
+            marker_color=C["purple"],
+        ))
+        fig2.update_layout(**_PLOT_LAYOUT, height=340, xaxis_title="ARI")
+        st.plotly_chart(fig2, use_container_width=True)
+
+    _section("전체 요약표")
+    st.dataframe(s, use_container_width=True, hide_index=True, height=320)
+
+
+# ---------------------------------------------------------------------------
+# 탭 7: BIT 연결 (Phase 5)
+# ---------------------------------------------------------------------------
+
+def 페이지_BIT연결() -> None:
+    _section("BIT − 정비기록 연결 뷰")
+    st.caption(
+        "BIT는 LCN 일치 + 시각 윈도우 조인까지만 사용합니다. "
+        "탐지 채널로 융합하지 않습니다(R3)."
+    )
+
+    윈도우 = st.slider("시각 윈도우 (시간)", 1, 72, 24)
+    조인 = BIT_정비기록_조인(윈도우_시간=윈도우)
+
+    bit_df = BIT이벤트_전체조회()
+    고장 = 고장이력_전체조회()
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        _kpi_card("BIT 이벤트", f"{len(bit_df)}건", border_color=C["blue"])
+    with c2:
+        _kpi_card("연결된 쌍", f"{len(조인)}건",
+                  sub=f"윈도우 ±{윈도우}h", border_color=C["green"])
+    with c3:
+        연결고장 = 조인["고장id"].nunique() if not 조인.empty else 0
+        비율 = (연결고장 / len(고장) * 100) if len(고장) else 0
+        _kpi_card("BIT 연계 고장", f"{비율:.1f}%",
+                  sub=f"{연결고장} / {len(고장)}건", border_color=C["orange"])
+
+    if bit_df.empty:
+        st.info(
+            "BIT 이벤트가 없습니다. 모의 BIT 로그는 다음으로 생성합니다:\n\n"
+            "```python\n"
+            "from synth.bit import generate_bit_events\n"
+            "from backend.crud import BIT이벤트_저장, 고장이력_전체조회\n"
+            "ev = generate_bit_events(고장이력_전체조회(), seed=0)\n"
+            "```"
+        )
+        return
+
+    if 조인.empty:
+        st.warning("조건에 맞는 연결이 없습니다. 윈도우를 넓혀보세요.")
+        return
+
+    _section("연결 목록")
+    st.dataframe(
+        조인, use_container_width=True, hide_index=True, height=420,
+        column_config={
+            "시간차_h": st.column_config.NumberColumn("시간차(h)", format="%.2f"),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # 메인 헤더 + 라우팅
 # ---------------------------------------------------------------------------
 
@@ -880,6 +1107,9 @@ def main() -> None:
     elif 메뉴 == "✏️ 고장 입력":    페이지_고장입력()
     elif 메뉴 == "📋 고장 현황":    페이지_고장현황()
     elif 메뉴 == "🔍 분석":         페이지_분석()
+    elif 메뉴 == "🧩 공통원인 후보": 페이지_공통원인후보()
+    elif 메뉴 == "🧪 실험 결과":     페이지_실험결과()
+    elif 메뉴 == "🔗 BIT 연결":      페이지_BIT연결()
 
 
 if __name__ == "__main__":

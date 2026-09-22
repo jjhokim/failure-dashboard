@@ -435,6 +435,39 @@ def 제대별_MTTR(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def LCN_파레토(df: pd.DataFrame, level: int = 2) -> pd.DataFrame:
+    """
+    LCN 상위 노드별 고장 건수 파레토 (Phase 5).
+
+    level은 LCN 계층 깊이로, 예를 들어 level=2면 `A.01.03.02` → `A.01` 로 집계한다.
+
+    Returns
+    -------
+    pd.DataFrame
+        columns: ["LCN노드", "건수", "비율_%", "누적비율_%"] — 건수 내림차순.
+    """
+    cols = ["LCN노드", "건수", "비율_%", "누적비율_%"]
+    if df.empty or "lcn" not in df.columns:
+        return pd.DataFrame(columns=cols)
+
+    s = df["lcn"].dropna().astype(str)
+    if s.empty:
+        return pd.DataFrame(columns=cols)
+
+    노드 = s.map(lambda v: ".".join(v.split(".")[:max(1, level)]))
+    freq = (
+        노드.value_counts()
+        .rename_axis("LCN노드")
+        .reset_index(name="건수")
+        .sort_values("건수", ascending=False)
+        .reset_index(drop=True)
+    )
+    전체 = freq["건수"].sum()
+    freq["비율_%"] = (freq["건수"] / 전체 * 100).round(1)
+    freq["누적비율_%"] = freq["비율_%"].cumsum().round(1)
+    return freq[cols]
+
+
 def 체계별_MTTR(df: pd.DataFrame) -> pd.DataFrame:
     """
     체계명 × 제대구분별 평균 수리소요시간 집계.
@@ -582,6 +615,58 @@ def BIT이벤트_전체조회() -> pd.DataFrame:
     """bit_events 테이블 전체를 DataFrame으로 반환한다."""
     with get_connection() as conn:
         return pd.read_sql("SELECT * FROM bit_events ORDER BY occurred_at", conn)
+
+
+def BIT_정비기록_조인(윈도우_시간: float = 24.0) -> pd.DataFrame:
+    """
+    BIT 이벤트와 고장이력을 조인한다 (Phase 5).
+
+    조인 조건: `lcn` 일치 AND |발생일시 − occurred_at| ≤ 윈도우_시간(기본 24h).
+
+    ※ R3: BIT는 탐지 채널로 융합하지 않는다. 이 조인은 조회·표시 용도이며,
+      군집화 입력으로 사용하지 않는다.
+
+    Returns
+    -------
+    pd.DataFrame
+        columns: 고장id, 발생일시, 체계명, LRU명, lcn, 고장증상, 처리상태,
+                 event_id, bit_code, occurred_at, 시간차_h
+        일치가 없으면 빈 DataFrame.
+    """
+    cols = ["고장id", "발생일시", "체계명", "LRU명", "lcn", "고장증상", "처리상태",
+            "event_id", "bit_code", "occurred_at", "시간차_h"]
+
+    고장 = 고장이력_전체조회()
+    bit = BIT이벤트_전체조회()
+    if 고장.empty or bit.empty or "lcn" not in 고장.columns:
+        return pd.DataFrame(columns=cols)
+
+    고장 = 고장[고장["lcn"].notna()].copy()
+    bit = bit[bit["lcn"].notna()].copy()
+    if 고장.empty or bit.empty:
+        return pd.DataFrame(columns=cols)
+
+    고장["_발생"] = pd.to_datetime(고장["발생일시"], errors="coerce")
+    bit["_발생"] = pd.to_datetime(bit["occurred_at"], errors="coerce")
+
+    merged = 고장.merge(bit, on="lcn", suffixes=("", "_bit"))
+    if merged.empty:
+        return pd.DataFrame(columns=cols)
+
+    merged["시간차_h"] = (
+        (merged["_발생"] - merged["_발생_bit"]).abs().dt.total_seconds() / 3600
+    )
+    merged = merged[merged["시간차_h"] <= float(윈도우_시간)].copy()
+    if merged.empty:
+        return pd.DataFrame(columns=cols)
+
+    merged = merged.rename(columns={"id": "고장id"})
+    merged["시간차_h"] = merged["시간차_h"].round(2)
+    return (
+        merged[cols]
+        .sort_values(["발생일시", "시간차_h"])
+        .reset_index(drop=True)
+    )
 
 
 # ===========================================================================
