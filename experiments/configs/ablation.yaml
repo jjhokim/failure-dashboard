@@ -1,0 +1,39 @@
+# Ablation 실험 설정 — experiments/preregistration.md 에 고정된 조건
+# 실행 후 이 파일을 수정하지 않는다(R5). 변경 시 사전등록 「변경 이력」에 기재.
+
+data:
+  n_records: 600
+  n_clusters: 10
+  cluster_size_dist: geometric   # uniform은 규모 축 변별력을 소거(사전등록 §2)
+  noise_ratio: 0.2
+  expression_variance: 0.5
+  n_systems: 12
+  op_hours_per_day: 8.0
+  time_span_days: 365
+
+detect:
+  model_name: snunlp/KR-SBERT-V40K-klueNLI-augSTS
+  tau_days: 30.0
+  use_cache: true
+  min_cluster_sizes: [5, 8, 12]  # 사전 고정 탐색 범위
+  default_weights:
+    sem: 0.5
+    lcn: 0.25
+    time: 0.25
+
+ablation:
+  deltas: [0.0, 0.25, 0.5, 0.75, 1.0]
+  channel_sets:                   # 가중치 0 = 채널 off (7조합)
+    sem:            {sem: 1.0, lcn: 0.0,  time: 0.0}
+    lcn:            {sem: 0.0, lcn: 1.0,  time: 0.0}
+    time:           {sem: 0.0, lcn: 0.0,  time: 1.0}
+    sem+lcn:        {sem: 0.5, lcn: 0.5,  time: 0.0}
+    sem+time:       {sem: 0.5, lcn: 0.0,  time: 0.5}
+    lcn+time:       {sem: 0.0, lcn: 0.5,  time: 0.5}
+    sem+lcn+time:   {sem: 0.5, lcn: 0.25, time: 0.25}
+
+criteria:
+  null_noise_ratio_min: 0.8       # C1-a, m 선택 규칙에도 사용
+  null_ari_abs_max: 0.05          # C1-b
+  permutation_ari_abs_max: 0.05   # C2
+  precision_at_k: 5               # C5
