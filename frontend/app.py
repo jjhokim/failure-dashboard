@@ -87,10 +87,43 @@ C = {
 # 지표 신뢰성 배지 (R6)
 # ---------------------------------------------------------------------------
 # 화면의 모든 지표 카드에 데이터 성격·용도 배지를 표시한다.
-# 현재 로드 데이터는 sample_data.csv(가상 샘플)이므로 '샘플데이터 기준' 문구를 쓴다.
-# Phase 0-2에서 sources(레코드 출처: sample/synthetic/import) 필드 도입 후,
-# 합성데이터 비중에 따라 '합성데이터 기준 · 검증용'으로 자동 전환한다.
-배지_문구 = "샘플데이터 기준 · 검증용"
+# 레코드 출처(source: sample/synthetic/import) 구성에 따라 문구를 동적으로 정한다.
+# 데이터가 섞여 있으면 그 사실을 숨기지 않고 '혼합'으로 표기한다.
+배지_기본 = "검증용"
+
+_출처_이름 = {"sample": "샘플데이터", "synthetic": "합성데이터", "import": "외부데이터"}
+
+
+# 현재 렌더링 중인 화면의 배지 문구. 각 페이지가 데이터를 조회한 뒤 _배지_갱신()으로
+# 설정하고, _kpi_card는 호출 시점에 이 값을 읽는다
+# (기본 인자로 두면 정의 시점에 바인딩되어 갱신이 반영되지 않는다).
+배지_현재 = 배지_기본
+
+
+def _배지_갱신(df: pd.DataFrame) -> str:
+    """데이터 출처에 맞춰 배지 문구를 갱신하고 반환한다."""
+    global 배지_현재
+    배지_현재 = _배지_문구(df)
+    return 배지_현재
+
+
+def _배지_문구(df: pd.DataFrame) -> str:
+    """
+    데이터 출처 구성에 맞는 R6 배지 문구를 만든다.
+
+    - 단일 출처면 그 이름을 쓴다.          예) "합성데이터 기준 · 검증용"
+    - 여러 출처가 섞이면 비중을 함께 밝힌다. 예) "혼합(합성 75%) 기준 · 검증용"
+    """
+    if df is None or df.empty or "source" not in df.columns:
+        return f"데이터 없음 · {배지_기본}"
+
+    비중 = df["source"].fillna("sample").value_counts(normalize=True)
+    최다 = str(비중.index[0])
+    이름 = _출처_이름.get(최다, 최다)
+
+    if len(비중) == 1:
+        return f"{이름} 기준 · {배지_기본}"
+    return f"혼합({이름} {비중.iloc[0]*100:.0f}%) 기준 · {배지_기본}"
 
 # Plotly 공통 레이아웃 (다크 테마)
 _PLOT_LAYOUT = dict(
@@ -245,9 +278,10 @@ def _kpi_card(
     value: str,
     sub: str = "",
     border_color: str = C["blue"],
-    badge: str = 배지_문구,
+    badge: str | None = None,
 ) -> None:
     """HTML 기반 KPI 카드 렌더링. badge(R6)를 카드 상단에 표시한다."""
+    badge      = 배지_현재 if badge is None else badge
     sub_html   = "" if not sub   else f'<p class="kpi-sub">{_h(sub)}</p>'
     badge_html = "" if not badge else f'<span class="kpi-badge">{_h(badge)}</span>'
     st.markdown(
@@ -352,6 +386,7 @@ def _사이드바() -> str:
 
         # DB 현황 요약 — 네이티브 컴포넌트 사용
         df_all = 고장이력_전체조회()
+        _배지_갱신(df_all)          # 데이터 출처에 맞춰 R6 배지 갱신
         kpi    = KPI_요약(df_all)
         _ai    = kpi["가용도_Ai"]
         ai_pct = _ai * 100 if _ai is not None else None
@@ -368,7 +403,7 @@ def _사이드바() -> str:
             delta=ai_delta,
             delta_color=ai_delta_color,
         )
-        st.caption(f"🟠 {배지_문구}")
+        st.caption(f"🟠 {배지_현재}")
         st.caption(f"미완료 {kpi['미완료_건수']}건 / 전체 {kpi['총_고장건수']}건")
 
         st.divider()
@@ -388,6 +423,7 @@ def 페이지_요약대시보드() -> None:
     _section("전체 현황 요약")
 
     df  = 고장이력_전체조회()
+    _배지_갱신(df)
     kpi = KPI_요약(df)
     ai  = kpi["가용도_Ai"]
 
@@ -482,7 +518,7 @@ def 페이지_요약대시보드() -> None:
             },
         )
         st.caption(
-            f"🟠 {배지_문구}  ·  MTTR은 완료건만 평균에 반영 "
+            f"🟠 {배지_현재}  ·  MTTR은 완료건만 평균에 반영 "
             "(미완료 우측절단 미처리 — Phase 0-4 Kaplan-Meier 예정)"
         )
 
@@ -886,7 +922,7 @@ def _파레토_차트(df: pd.DataFrame, 기준컬럼: str) -> go.Figure:
 def 페이지_공통원인후보() -> None:
     _section("공통원인 후보 탐지 · 우선순위화")
     st.caption(
-        f"🟠 {배지_문구}  ·  KoSBERT + HDBSCAN 파이프라인 "
+        f"🟠 {배지_현재}  ·  KoSBERT + HDBSCAN 파이프라인 "
         "(통계 지표 산출은 'AI'로 부르지 않습니다)"
     )
 
