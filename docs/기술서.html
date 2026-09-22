@@ -1,0 +1,1221 @@
+<html lang="ko"><head><meta charset="utf-8">
+<title>정비기록 공통원인 후보 탐지 시스템 — 기술서</title>
+<style>
+ body { font-family:'Malgun Gothic','맑은 고딕',sans-serif; line-height:1.75;
+        max-width:900px; margin:40px auto; padding:0 24px; color:#222; }
+ h1 { border-bottom:3px solid #2c5f8d; padding-bottom:8px; margin-top:48px; color:#1a3d5c; }
+ h2 { border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:34px; color:#2c5f8d; }
+ h3 { margin-top:26px; color:#3a5f7d; }
+ table { border-collapse:collapse; width:100%; margin:16px 0; font-size:.94em; }
+ th,td { border:1px solid #ccc; padding:8px 10px; text-align:left; vertical-align:top; }
+ th { background:#eef3f8; }
+ code { background:#f4f4f4; padding:2px 5px; border-radius:3px; font-size:.92em; }
+ pre { background:#f7f7f7; padding:14px; border-left:4px solid #2c5f8d;
+        overflow-x:auto; border-radius:4px; }
+ pre code { background:none; }
+ blockquote { border-left:4px solid #c0762a; background:#fdf8f2;
+               margin:16px 0; padding:10px 18px; }
+ hr { border:none; border-top:1px solid #ddd; margin:34px 0; }
+ @media print { body { max-width:none; margin:0; } h1 { page-break-before:always; }
+                 h1:first-of-type { page-break-before:avoid; } }
+</style></head><body>
+<h1 id="_1">정비기록 공통원인 후보 탐지 시스템 — 기술서</h1>
+<blockquote>
+<p>이 문서는 <strong>비전공자도 읽을 수 있도록</strong> 작성했습니다.
+전문 용어가 나올 때마다 그 자리에서 풀어 설명하고, 맨 뒤에 용어 사전을 두었습니다.
+작성일: 2026-09-22 · 대상 저장소: <code>jjhokim/failure-dashboard</code></p>
+</blockquote>
+<hr />
+<h1 id="0">0. 한눈에 보기</h1>
+<p><strong>한 문장 요약</strong></p>
+<blockquote>
+<p>정비병이 손으로 적은 정비기록 수백~수천 건을 읽어서, <strong>"이거 같은 원인 아닌가?"
+싶은 고장들을 자동으로 묶어주고, 어느 묶음부터 손봐야 할지 순서를 매겨주는 도구</strong>를
+만들고, 그 도구가 진짜 작동하는지를 <strong>스스로를 속이지 않는 방법으로</strong> 검증했습니다.</p>
+</blockquote>
+<p><strong>무엇을 만들었나</strong></p>
+<table>
+<thead>
+<tr>
+<th>결과물</th>
+<th>내용</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>분석 도구</td>
+<td>고장기록을 입력·조회·분석하는 웹 대시보드 (7개 화면)</td>
+</tr>
+<tr>
+<td>탐지 엔진</td>
+<td>문장 의미 + 부품 위치 + 발생 시각을 함께 보고 고장을 묶는 알고리즘</td>
+</tr>
+<tr>
+<td>우선순위 엔진</td>
+<td>묶인 고장군에 점수를 매겨 순위표를 만드는 기능</td>
+</tr>
+<tr>
+<td>검증 체계</td>
+<td>가짜 데이터를 만들어 도구 성능을 측정하되, <strong>자기가 자기를 채점하는 함정</strong>을 차단한 설계</td>
+</tr>
+<tr>
+<td>실험 결과</td>
+<td>사전에 합격기준을 공표하고 8번 반복 실험한 결과 보고서 (불합격 항목 포함)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>가장 정직하게 말해야 할 결과</strong></p>
+<blockquote>
+<p>사전에 정한 6개 합격기준 중 <strong>5개는 통과, 1개는 불합격</strong>했습니다.
+불합격 항목을 숨기거나 기준을 나중에 바꾸지 않고 그대로 보고했습니다.
+그리고 그 불합격의 원인을 추적한 결과, <strong>도구의 문제가 아니라 시험 문제(가짜 데이터)의
+설계 문제</strong>였다는 것을 밝혀냈습니다.</p>
+</blockquote>
+<hr />
+<h1 id="1">1. 배경 — 왜 이걸 만들어야 했나</h1>
+<h2 id="11">1.1 현장에서 벌어지는 일</h2>
+<p>유도무기 같은 무기체계는 한 번 배치되면 수십 년을 운용합니다. 그동안 부품이 고장나고,
+정비병이 고치고, 그 내용을 기록으로 남깁니다. 기록은 대략 이렇게 생겼습니다.</p>
+<pre><code>발생일시: 2025-04-11 12:36
+체계명:   체계-B
+부품:     LRU-010
+고장유형: 기계적
+고장증상: &quot;구동축 마모로 인한 위치 오차 발생&quot;     ← 사람이 쓴 자유서술
+조치내용: &quot;기어 어셈블리 교환 후 백래시 조정&quot;
+</code></pre>
+<p>여기서 <strong>핵심 정보는 "고장유형: 기계적"이 아니라 "구동축 마모로 인한 위치 오차 발생"</strong>
+이라는 문장 안에 있습니다. 그런데 이 문장은 사람마다 다르게 씁니다.</p>
+<ul>
+<li>A 정비병: "구동모터에서 과열 발생"</li>
+<li>B 정비병: "구동모터 온도 급상승 확인"</li>
+<li>C 정비병: "고온 환경에서 구동모터 발열 이상"</li>
+</ul>
+<p><strong>세 사람이 같은 고장을 적었는데 글자는 하나도 안 겹칩니다.</strong> 그래서 "과열"로 검색하면
+B와 C는 안 걸립니다. 이게 첫 번째 문제입니다.</p>
+<h2 id="12">1.2 진짜 위험한 상황: 공통원인 고장</h2>
+<p>개별 고장 하나하나는 대수롭지 않을 수 있습니다. 문제는 <strong>여러 고장이 사실은 하나의
+뿌리에서 나온 경우</strong>입니다. 예를 들면,</p>
+<ul>
+<li>특정 시기에 납품된 부품 로트(batch)에 불량이 섞여 있었다</li>
+<li>어떤 창고의 보관 환경(고온·다습)이 부품을 열화시켰다</li>
+<li>설계상 특정 조건에서만 드러나는 결함이 있다</li>
+</ul>
+<p>이런 걸 <strong>공통원인 고장(Common-Cause Failure, CCF)</strong> 이라고 합니다. 개별 고장으로 보면
+"그냥 가끔 고장나는구나" 싶지만, 묶어서 보면 <strong>"아, 이건 2024년 3월 로트 문제구나"</strong> 가
+드러납니다.</p>
+<p><strong>공통원인을 못 찾으면 어떻게 되나?</strong>
+- 같은 고장이 계속 재발합니다. 부품만 갈아 끼우고 근본 원인은 그대로이기 때문입니다.
+- 정비 비용과 불가동 시간이 누적됩니다.
+- 최악의 경우, 결정적 순간에 여러 장비가 동시에 먹통이 됩니다.</p>
+<h2 id="13">1.3 그런데 왜 지금까지 못 했나</h2>
+<p>선행 연구<sup id="fnref:1"><a class="footnote-ref" href="#fn:1">1</a></sup>가 지적하듯, 현장 데이터 수집 자체가 만만치 않습니다.</p>
+<ul>
+<li>수기로 작성되어 전산화가 안 된 기록</li>
+<li>담당자마다 다른 작성 방식</li>
+<li>인수인계 누락</li>
+<li>사업이 끝나면 수집도 끊김</li>
+</ul>
+<p>즉 <strong>"어떤 데이터를 어떻게 모을 것인가"</strong> 가 선행 과제였습니다. 그런데 데이터를 모으고
+나면 다음 질문이 옵니다. <strong>"모았으니, 이제 이걸로 뭘 하지?"</strong></p>
+<p>이 프로젝트는 바로 그 다음 단계입니다.</p>
+<hr />
+<h1 id="2">2. 아이디어 — 핵심 착상</h1>
+<h2 id="21">2.1 사람은 어떻게 공통원인을 찾는가</h2>
+<p>숙련된 IPS 담당자가 기록 더미를 보고 공통원인을 의심할 때, 머릿속에서는 대략 세 가지를
+동시에 봅니다.</p>
+<ol>
+<li><strong>"증상이 비슷한데?"</strong> — 문장의 의미</li>
+<li><strong>"부품 위치가 가깝네?"</strong> — 구조상 이웃인가</li>
+<li><strong>"시기가 몰려 있네?"</strong> — 비슷한 시점에 터졌나</li>
+</ol>
+<p><strong>셋 중 하나만으로는 부족합니다.</strong>
+- 증상만 보면: "과열"은 전혀 다른 원인으로도 생깁니다.
+- 위치만 보면: 같은 부품이라고 다 같은 원인은 아닙니다.
+- 시기만 보면: 우연히 같은 주에 터진 무관한 고장도 많습니다.</p>
+<p><strong>그런데 셋이 동시에 겹치면?</strong> 그때 비로소 "같은 원인 아닐까?" 하는 의심이 강해집니다.</p>
+<h2 id="22">2.2 그래서 이렇게 만들었다</h2>
+<p>이 직관을 그대로 코드로 옮겼습니다.</p>
+<pre><code>고장기록 A와 고장기록 B가 얼마나 &quot;가까운가&quot;를 세 가지 잣대로 각각 재고,
+세 점수를 합쳐서 하나의 &quot;종합 거리&quot;를 만든다.
+그 다음 서로 가까운 것들끼리 자동으로 묶는다.
+</code></pre>
+<p>여기서 <strong>"거리"</strong> 라는 말이 핵심입니다. 두 기록이 비슷하면 거리가 0에 가깝고, 전혀 다르면
+1에 가깝습니다. 세 개의 거리를 각각 구한 뒤 가중평균을 냅니다.</p>
+<pre><code>종합거리 = 0.5 × (문장 의미 거리)
+         + 0.25 × (부품 위치 거리)
+         + 0.25 × (발생 시각 거리)
+</code></pre>
+<p>가중치(0.5 / 0.25 / 0.25)는 "의미를 절반, 나머지 둘을 각각 4분의 1씩 보겠다"는 뜻입니다.
+<strong>어떤 채널의 가중치를 0으로 두면 그 채널을 아예 안 보는 것</strong>이 되는데, 이 성질을 나중에
+"그 채널이 정말 필요한가?"를 시험하는 데 씁니다.</p>
+<h2 id="23">2.3 묶는 것으로 끝이 아니다 — 순서를 매겨야 한다</h2>
+<p>고장 600건을 돌리면 군집이 10개쯤 나옵니다. <strong>그럼 10개를 다 조사해야 하나?</strong>
+현실적으로 인력과 예산이 한정되어 있으니, <strong>어느 것부터 볼지 순서</strong>가 필요합니다.</p>
+<p>세 가지 축으로 점수를 냅니다.</p>
+<table>
+<thead>
+<tr>
+<th>축</th>
+<th>의미</th>
+<th>왜 중요한가</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>규모</strong></td>
+<td>이 묶음에 고장이 몇 건 들어있나</td>
+<td>많이 터질수록 영향이 크다</td>
+</tr>
+<tr>
+<td><strong>추세</strong></td>
+<td>최근에 늘고 있나, 줄고 있나</td>
+<td>늘고 있으면 급하다</td>
+</tr>
+<tr>
+<td><strong>치명도</strong></td>
+<td>임무에 지장을 주는 고장 비율이 높은가</td>
+<td>못 쓰게 만드는 고장이 더 위험하다</td>
+</tr>
+</tbody>
+</table>
+<p>세 점수를 표준화해서 합산하고, 높은 순으로 순위표를 만듭니다. 순위표에는 <strong>대표 부품 위치,
+대표 문장 3개</strong>를 같이 보여줘서 담당자가 바로 "아 이런 건이구나" 파악할 수 있게 했습니다.</p>
+<hr />
+<h1 id="3">3. 가장 중요한 문제 — "자기가 자기를 채점하는 함정"</h1>
+<p>이 절이 이 프로젝트의 <strong>핵심 기여</strong>입니다. 조금 어렵지만 비유로 풀어보겠습니다.</p>
+<h2 id="31">3.1 문제 상황</h2>
+<p>도구를 만들었으면 <strong>"얼마나 잘 맞히나?"</strong> 를 측정해야 합니다. 그런데 실제 야전 데이터에는
+<strong>정답이 없습니다.</strong> "이 10건이 진짜 같은 원인이었다"고 알려주는 사람이 없으니까요.</p>
+<p>그래서 흔히 쓰는 방법이 <strong>가짜 데이터(합성데이터) 만들기</strong>입니다.</p>
+<pre><code>1. 내가 직접 &quot;이 10건은 원인 A&quot; &quot;저 8건은 원인 B&quot; 라고 정해서 가짜 고장기록을 만든다.
+2. 도구에게 그 기록을 주고 묶어보라고 한다.
+3. 도구가 묶은 결과와 내가 정한 정답을 비교해서 점수를 낸다.
+</code></pre>
+<p>합리적으로 보입니다. <strong>그런데 여기에 함정이 있습니다.</strong></p>
+<h2 id="32">3.2 함정: 시험문제에 답을 적어놓기</h2>
+<p>가짜 데이터를 만들 때 이런 실수를 하기 쉽습니다.</p>
+<blockquote>
+<p>원인 A 그룹의 고장 문장을 만들 때, 문장에 "A"라는 표시를 슬쩍 남긴다.
+예를 들어 A그룹은 전부 "과열"이라는 단어를 쓰고, B그룹은 전부 "진동"을 쓰게 한다.</p>
+</blockquote>
+<p>그러면 도구는 <strong>"과열"이라는 단어만 보고도 100점</strong>을 받습니다. 하지만 이건 도구가
+똑똑해서가 아니라, <strong>시험지에 답이 적혀 있었기 때문</strong>입니다.</p>
+<p>이걸 <strong>순환검증(circular validation)</strong> 또는 <strong>"double dipping"</strong> 이라고 합니다.
+신경과학 분야에서 유명한 연구<sup id="fnref:2"><a class="footnote-ref" href="#fn:2">2</a></sup>가 이 문제를 지적했는데, 그 연구는 충격적인 실험을
+했습니다.</p>
+<blockquote>
+<p><strong>아무 효과도 없는 데이터</strong>(사람이 아무것도 안 하고 누워 있을 때의 뇌 영상)에
+당시 널리 쓰이던 분석 절차를 그대로 적용했더니, <strong>있지도 않은 효과가 검출되었다.</strong>
+그리고 2008년 주요 학술지 논문 134편을 조사했더니 <strong>42%가 이 함정에 빠져 있었다.</strong></p>
+</blockquote>
+<h2 id="33">3.3 우리는 이렇게 차단했다</h2>
+<p><strong>"정답 라벨은 절대로 관측 데이터에 닿지 않는다"</strong> 는 원칙을 세우고, 세 가지 규칙으로
+강제했습니다.</p>
+<h3 id="1_1">규칙 1 — 정답은 문장 생성기를 거치지 않는다</h3>
+<p>가짜 문장을 만드는 과정을 <strong>2단계로 쪼갰습니다.</strong></p>
+<pre><code>[1단계] 정답 라벨 → 물리 상태로 변환          ← 사람이 짠 규칙 코드만 사용
+        &quot;원인 A&quot; → {부품: 구동모터, 증상: 과열, 환경: 고온, 시각: 3월 12일}
+
+[2단계] 물리 상태 → 자연스러운 문장 생성      ← 여기서 라벨은 아예 안 보임
+        {구동모터, 과열, 고온} → &quot;고온 환경에서 구동모터 과열이 발생함&quot;
+</code></pre>
+<p><strong>2단계 함수는 "원인 A"라는 정보를 인자로 받지도 못합니다.</strong> 코드 수준에서 막아뒀고,
+실수로 넣으면 에러가 나도록 했습니다. 즉 <em>"정답은 문장 만드는 단계를 거치지 않는다"</em>.</p>
+<h3 id="2_1">규칙 2 — 만드는 쪽과 찾는 쪽이 도구를 공유하지 않는다</h3>
+<p>가짜 데이터를 <strong>만드는 프로그램</strong>과 공통원인을 <strong>찾는 프로그램</strong>이 같은 단어 사전이나
+같은 분석 도구를 쓰면, 찾는 쪽이 만드는 쪽의 규칙을 그대로 되읽게 됩니다.</p>
+<p>그래서 두 프로그램은 <strong>서로를 참조하지 못하도록</strong> 분리했고, 단어 사전도 따로 만들었습니다.
+(자동 검사로 강제합니다 — 만약 누가 나중에 코드를 고쳐서 서로 참조하게 하면 테스트가
+실패합니다.)</p>
+<h3 id="3_1">규칙 3 — 자체진단 로그는 탐지에 안 쓴다</h3>
+<p>장비에는 BIT(Built-In Test)라는 자체진단 기능이 있어서 이상이 생기면 코드를 남깁니다.
+이걸 탐지에 쓰면 도움이 될 것 같지만, <strong>가짜 BIT 로그는 결국 우리가 정답을 알고 만든
+것</strong>이라 또 순환이 생깁니다.</p>
+<p>그래서 BIT는 <strong>"이 고장 근처에 이런 진단 신호가 있었다"고 보여주기만</strong> 하고,
+묶는 계산에는 절대 넣지 않았습니다.</p>
+<h3 id="_2">그리고 — 두 개의 대조군</h3>
+<p>위 세 규칙을 지켜도 불안하니, <strong>일부러 아무 신호도 없는 데이터</strong>로 시험했습니다.</p>
+<table>
+<thead>
+<tr>
+<th>대조군</th>
+<th>방법</th>
+<th>기대 결과</th>
+<th>실제 결과</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>무주입</td>
+<td>공통원인을 하나도 안 심은 데이터</td>
+<td>아무것도 못 찾아야 정상</td>
+<td><strong>점수 -0.002</strong> (사실상 0) ✅</td>
+</tr>
+<tr>
+<td>라벨 순열</td>
+<td>정답표를 무작위로 섞어버림</td>
+<td>점수가 0으로 붕괴해야 정상</td>
+<td><strong>점수 -0.003</strong> ✅</td>
+</tr>
+</tbody>
+</table>
+<p>두 대조군 모두 통과했습니다. 이건 3.2에서 소개한 연구가 한 일(효과 없는 데이터로 허위
+효과를 점검)과 정확히 같은 논리입니다.</p>
+<h3 id="3_2">추가로 — 누출 자동 검사 3종</h3>
+<p>데이터를 만들 때마다 자동으로 세 가지를 검사합니다.</p>
+<ol>
+<li>문장에 "군집", "cluster", "라벨" 같은 금지 단어가 들어갔나 → <strong>0%여야 함</strong></li>
+<li>문장만 보고 정답을 맞히는 간단한 기계를 학습시키면 얼마나 맞히나 → 무주입 대비 비교</li>
+<li>그룹끼리 단어가 얼마나 겹치나</li>
+</ol>
+<hr />
+<h1 id="4">4. 프로젝트 흐름 — 무엇을 어떤 순서로 만들었나</h1>
+<h2 id="41">4.1 전체 그림</h2>
+<pre><code>[0단계] 기존 대시보드 정비 — 잘못된 계산식 고치고 데이터 구조 확장
+   ↓
+[1단계] 가짜 데이터 생성기 — 정답을 아는 시험문제 만들기 (순환 차단하며)
+   ↓
+[2단계] 탐지 엔진 — 세 가지 잣대로 고장을 묶는 기능
+   ↓
+[3단계] 우선순위 엔진 — 묶인 것에 점수 매기기
+   ↓
+[4단계] 실험 — 사전에 기준 공표하고 8번 반복 측정
+   ↓
+[5단계] 대시보드 통합 — 화면에서 다 볼 수 있게
+</code></pre>
+<h2 id="42-0-3">4.2 0단계 — 기존 코드의 계산 오류 3건 수정</h2>
+<p>프로젝트 시작 시점의 대시보드에는 <strong>지표 계산에 오류가 3개</strong> 있었습니다.</p>
+<h3 id="1-ao-ai">오류 1: 이름이 틀렸다 (Ao라고 썼는데 실은 Ai)</h3>
+<p>화면에 <strong>"가동률 Ao"</strong> 라고 표시하고 있었는데, 실제 계산식은 Ao가 아니라 <strong>Ai</strong> 였습니다.</p>
+<ul>
+<li><strong>Ai (고유가용도)</strong>: 순수하게 "고장나는 빈도"와 "고치는 시간"만 따진 값.
+  설계 단계에서 쓰는 이상적인 수치입니다.</li>
+<li><strong>Ao (운용가용도)</strong>: 여기에 <strong>부품 기다리는 시간, 행정 절차 시간</strong> 등 현실의 지연까지
+  포함한 값. 실제 운용에서 의미 있는 건 이쪽입니다.</li>
+</ul>
+<p>Ao는 항상 Ai보다 낮습니다. 그런데 Ai를 Ao라고 부르면 <strong>"우리 장비 가동률 87%"</strong> 라고
+보고하게 되는데 실제 운용 가동률은 그보다 훨씬 낮을 수 있습니다. <strong>위험한 착각</strong>입니다.</p>
+<p>→ 이름을 Ai로 정정하고, 진짜 Ao는 필요한 데이터(정비지연시간)가 없으면
+<strong>아예 계산하지 않고 "미산출"로 표시</strong>하도록 했습니다. 억지로 숫자를 만들지 않는 것이
+더 정직하기 때문입니다.</p>
+<h3 id="2_2">오류 2: 평균 수리시간을 짧게 잡고 있었다</h3>
+<p>MTTR(평균 수리시간)을 계산할 때 <strong>"수리 완료된 건"만 평균</strong>을 냈습니다.
+언뜻 당연해 보이지만 함정이 있습니다.</p>
+<blockquote>
+<p>쉬운 고장은 빨리 끝나서 "완료"로 집계됩니다.
+<strong>어려운 고장은 아직도 수리 중이라 집계에서 빠집니다.</strong>
+결과: 쉬운 것만 평균내니 <strong>수리시간이 실제보다 짧게 나옵니다.</strong></p>
+</blockquote>
+<p>이걸 통계학에서 <strong>우측절단(right censoring)</strong> 문제라고 합니다. 예를 들어,</p>
+<ul>
+<li>완료된 수리: 2시간, 4시간 → 단순 평균 <strong>3시간</strong></li>
+<li>그런데 아직 진행 중인 수리가 하나 있고 벌써 10시간째다</li>
+<li>이걸 반영하면 실제 평균은 <strong>5.3시간</strong></li>
+</ul>
+<p>의료 통계에서 "환자 생존기간"을 다룰 때 쓰는 <strong>카플란-마이어(Kaplan-Meier)</strong> 방법을
+그대로 적용했습니다. "아직 안 끝난 것도 최소 이만큼은 걸렸다"는 정보를 버리지 않고
+반영하는 방법입니다.</p>
+<blockquote>
+<p><strong>실제 데이터에 적용해 보니</strong>: 단순 평균 20.8시간 → 보정 후 <strong>973.6시간</strong>.
+47배 차이입니다. 수리 중인 11건이 232~8,077시간(약 10일~11개월) 동안 열려 있었기
+때문입니다. 기존 방식은 이 사실을 완전히 가리고 있었습니다.</p>
+</blockquote>
+<h3 id="3-mtbf">오류 3: MTBF 분모가 잘못됐다</h3>
+<p>MTBF(평균 고장간격)를 <strong>"달력상 경과 시간 ÷ 고장 건수"</strong> 로 계산하고 있었습니다.
+문제는 장비가 창고에 가만히 있어도 달력은 흘러간다는 것입니다.</p>
+<p>→ <strong>"실제 운용한 시간의 합 ÷ 고장 건수"</strong> 로 바꿨습니다.
+운용시간 데이터가 없으면 기존 방식으로 계산하되, 화면에 <strong>"달력근사"</strong> 라고 표시해서
+이 값이 근사치임을 숨기지 않도록 했습니다.</p>
+<h2 id="43-1">4.3 1단계 — 가짜 데이터 생성기</h2>
+<p>3장에서 설명한 순환 차단 원칙을 지키면서 가짜 정비기록을 만듭니다.</p>
+<p><strong>조절할 수 있는 손잡이(파라미터)</strong></p>
+<table>
+<thead>
+<tr>
+<th>손잡이</th>
+<th>뜻</th>
+<th>예</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>기록 수</td>
+<td>몇 건 만들까</td>
+<td>600건</td>
+</tr>
+<tr>
+<td>군집 수</td>
+<td>공통원인을 몇 개 심을까</td>
+<td>10개</td>
+</tr>
+<tr>
+<td><strong>신호 강도 δ</strong></td>
+<td>공통원인을 얼마나 뚜렷하게 심을까</td>
+<td>0.0 ~ 1.0</td>
+</tr>
+<tr>
+<td>잡음 비율</td>
+<td>아무 관계 없는 단발 고장 비율</td>
+<td>20%</td>
+</tr>
+<tr>
+<td>표현 편차</td>
+<td>같은 증상을 얼마나 다르게 쓸까</td>
+<td>0.5</td>
+</tr>
+</tbody>
+</table>
+<p><strong>신호 강도 δ가 핵심</strong>입니다.
+- <strong>δ = 0</strong>: 공통원인을 하나도 안 심음 → 도구가 아무것도 못 찾아야 정상 (대조군)
+- <strong>δ = 1.0</strong>: 아주 뚜렷하게 심음 → 도구가 잘 찾아야 정상</p>
+<p>δ를 0에서 1까지 올리면서 <strong>"신호가 강해질수록 점수도 올라가는가"</strong> 를 봅니다.
+점수가 δ와 무관하게 높다면 뭔가 잘못된 것(순환 의심)입니다.</p>
+<h2 id="44-2">4.4 2단계 — 탐지 엔진</h2>
+<p>세 가지 거리를 각각 계산합니다.</p>
+<p><strong>① 의미 거리 — 문장이 얼마나 비슷한가</strong></p>
+<p>한국어 문장을 숫자 벡터로 바꾸는 <strong>KoSBERT</strong> 라는 인공지능 모델을 씁니다.
+비슷한 뜻의 문장은 비슷한 숫자로 변환되는 성질이 있습니다.</p>
+<p>실제로 확인해 봤습니다.</p>
+<pre><code>&quot;구동모터에서 과열이 발생함&quot; ↔ &quot;구동모터 발열 이상 확인&quot;   → 거리 0.18 (가깝다)
+&quot;구동모터에서 과열이 발생함&quot; ↔ &quot;통신모듈 신호 끊김&quot;        → 거리 0.77 (멀다)
+</code></pre>
+<p>글자는 거의 안 겹치는데도 <strong>뜻이 비슷하면 가깝다고 판단</strong>합니다. 1.1절에서 말한
+"사람마다 다르게 쓰는" 문제를 이걸로 해결합니다.</p>
+<p><strong>② 구조 거리 — 부품 위치가 얼마나 가까운가</strong></p>
+<p>부품에는 <strong>LCN(군수관리번호)</strong> 이라는 계층 주소가 붙습니다. 주소 체계와 비슷합니다.</p>
+<pre><code>A.01.03.02  →  A체계 / 1번 계통 / 3번 조립체 / 2번 부품
+</code></pre>
+<p>두 부품이 <strong>얼마나 가까운 친척인가</strong>를 계산합니다.
+- <code>A.01.03.02</code> 와 <code>A.01.03.05</code> → 형제 (가깝다)
+- <code>A.01.03.02</code> 와 <code>B.05.09.01</code> → 완전 남남 (멀다)</p>
+<p><strong>③ 시간 거리 — 발생 시점이 얼마나 가까운가</strong></p>
+<pre><code>시간거리 = 1 - exp(-|시간차| / 30일)
+</code></pre>
+<p>같은 날 발생하면 0에 가깝고, 몇 달 차이나면 1에 가까워집니다.</p>
+<p><strong>묶기 — HDBSCAN</strong></p>
+<p>세 거리를 합친 뒤 <strong>HDBSCAN</strong> 이라는 알고리즘으로 묶습니다. 이 알고리즘을 고른 이유는
+두 가지입니다.</p>
+<ol>
+<li><strong>몇 개로 묶을지 미리 안 정해도 됩니다.</strong> (실제로 공통원인이 몇 개인지 모르니까)</li>
+<li><strong>"어디에도 안 속함"을 인정합니다.</strong> 단발성 고장을 억지로 어딘가에 끼워넣지 않고
+   <strong>잡음(-1)</strong> 으로 따로 빼줍니다. 정비기록에는 진짜 우연한 고장이 많으므로 중요합니다.</li>
+</ol>
+<h2 id="45-35">4.5 3~5단계</h2>
+<ul>
+<li><strong>3단계</strong>: 묶인 군집에 규모·추세·치명도 점수를 매겨 순위표 생성</li>
+<li><strong>4단계</strong>: 실험 (5장에서 자세히)</li>
+<li><strong>5단계</strong>: 대시보드에 화면 3개 추가 — 공통원인 후보 / 실험 결과 / BIT 연결</li>
+</ul>
+<hr />
+<h1 id="5">5. 실험 — 무엇을 알아냈나</h1>
+<h2 id="51">5.1 먼저: 실험 전에 기준을 공표했다</h2>
+<p>이 프로젝트에서 가장 신경 쓴 부분입니다.</p>
+<p><strong>왜 미리 정해야 하나?</strong> 실험을 해보고 나서 기준을 정하면, 무의식적으로라도
+<strong>"내 결과가 통과하도록"</strong> 기준을 맞추게 됩니다. 이걸 막으려면 <strong>결과를 보기 전에</strong>
+합격선을 문서로 못박아야 합니다.</p>
+<p>그래서 <code>preregistration.md</code> 라는 문서에 6개 기준을 적고 <strong>커밋(기록 고정)한 뒤</strong>
+실험을 돌렸습니다. 그리고 <strong>실행 후 그 문서를 수정하지 않았습니다.</strong></p>
+<p>또한 모든 수치는 <strong>8번 반복(시드 8개)한 평균±표준편차</strong>로만 보고합니다.
+한 번 돌려서 좋은 결과가 나온 걸 인용하는 것은 금지했습니다.</p>
+<h2 id="52-5-1">5.2 결과 — 5개 통과, 1개 불합격</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>기준</th>
+<th>결과</th>
+<th>판정</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>C1</td>
+<td>공통원인을 안 심으면 아무것도 못 찾아야</td>
+<td>점수 -0.002, 잡음비율 0.83</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>C2</td>
+<td>정답표를 섞으면 점수가 0으로 붕괴해야</td>
+<td>-0.003</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>C3</td>
+<td>신호가 강할수록 점수가 올라가야</td>
+<td>단조 증가</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>C4</strong></td>
+<td><strong>세 채널을 합친 게 하나만 쓴 것보다 나아야</strong></td>
+<td><strong>합친 것 0.736 &lt; 시간만 0.853</strong></td>
+<td>❌</td>
+</tr>
+<tr>
+<td>C5</td>
+<td>순위가 정답 순위와 상관 있어야</td>
+<td>0.526, 신뢰구간 [0.267, 0.760]</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>C6</td>
+<td>점수 축들의 상관관계 보고</td>
+<td>규모~치명도 = +0.841</td>
+<td>⚠ 보고</td>
+</tr>
+</tbody>
+</table>
+<p><strong>C4가 불합격입니다.</strong> 세 채널을 합쳐 쓰는 게 이 프로젝트의 핵심 아이디어인데,
+<strong>시간 하나만 쓴 것보다 못했습니다.</strong></p>
+<h2 id="53">5.3 불합격을 어떻게 처리했나 — 기준을 바꾸지 않았다</h2>
+<p>여기서 유혹이 생깁니다. <em>"기준을 좀 낮추면 통과인데..."</em> 또는 <em>"이 실험은 없던 걸로
+하고 다시 돌릴까?"</em></p>
+<p><strong>둘 다 하지 않았습니다.</strong> 불합격은 불합격으로 보고하고, <strong>대신 원인을 조사</strong>했습니다.
+그리고 원인 조사는 <strong>새로운 사전등록 문서를 다시 쓰고</strong> 진행했습니다.</p>
+<h3 id="1_2">가설 1: 가중치 배분이 나빴나? → <strong>틀렸습니다</strong></h3>
+<p>혹시 0.5/0.25/0.25 라는 가중치가 나빠서일까 싶어, <strong>가능한 모든 가중치 조합을 다
+시험</strong>해 봤습니다. (단, 가중치를 고르는 데이터와 성능을 재는 데이터를 완전히 분리해서
+또 다른 순환을 막았습니다.)</p>
+<p>결과: <strong>최적 조합이 "시간만 1.0, 나머지 0"</strong> 이었습니다.
+즉 자유롭게 고르게 했더니 <strong>기계가 스스로 나머지 두 채널을 꺼버렸습니다.</strong>
+가중치 문제가 아니었습니다.</p>
+<h3 id="2_3">가설 2: 시험문제가 잘못됐나? → <strong>맞았습니다</strong></h3>
+<p>가짜 데이터를 만들 때 "같은 원인이면 비슷한 시기에 터진다"고 설정했는데,
+그 <strong>"비슷한 시기"의 폭이 δ=1.0에서 하루로 줄어들도록</strong> 코드가 짜여 있었습니다.</p>
+<blockquote>
+<p>같은 원인의 고장이 <strong>전부 하루 안에</strong> 몰려 있으면?
+<strong>날짜만 봐도 다 맞힐 수 있습니다.</strong> 문장이고 부품이고 볼 필요가 없습니다.</p>
+</blockquote>
+<p>즉 시험문제가 <strong>시간 채널에게만 지나치게 유리하게</strong> 출제되어 있었습니다.</p>
+<p>그래서 이 폭을 <strong>하루 → 3.65일</strong>(관측기간의 1%)로 현실적으로 완화하고 다시 돌렸습니다.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>세 채널 합침</th>
+<th>시간만</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>기존 (하루로 몰림)</td>
+<td>0.736</td>
+<td><strong>0.853</strong> ← 시간이 이김</td>
+</tr>
+<tr>
+<td>수정 (3.65일로 분산)</td>
+<td><strong>0.938</strong></td>
+<td>0.786 ← 합친 게 이김</td>
+</tr>
+</tbody>
+</table>
+<p><strong>역전되었습니다.</strong> 게다가 이 조건에서 가중치를 다시 자유 탐색했더니
+이번엔 <strong>세 채널을 모두 살렸습니다</strong> (0.5 / 0.25 / 0.25 — 원래 기본값과 같음).</p>
+<h3 id="_3">그래서 결론은</h3>
+<blockquote>
+<p><strong>"세 채널을 합치는 게 좋은가?"의 답은 "경우에 따라 다르다"입니다.</strong>
+공통원인 고장이 <strong>하루 안에 다 몰려서 터지면</strong> 날짜만 봐도 되니 합칠 필요가 없습니다.
+그러나 <strong>며칠~몇 주에 걸쳐 퍼져서 나타나면</strong> 세 채널을 합치는 쪽이 확실히 낫습니다.</p>
+</blockquote>
+<p>그리고 <strong>실제 현장이 어느 쪽인지는 이 연구가 답하지 못합니다.</strong> (7장 한계 참조)</p>
+<h2 id="54">5.4 민감도 분석 — 경계가 어디인가</h2>
+<p>"며칠부터 합치는 게 유리해지나?"를 확인하려고, 시간 폭을 1일부터 30일까지 바꿔가며
+전부 측정했습니다.</p>
+<table>
+<thead>
+<tr>
+<th>시간 폭</th>
+<th>세 채널 합침</th>
+<th>시간만</th>
+<th>누가 이기나</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1일</td>
+<td>0.685</td>
+<td><strong>0.848</strong></td>
+<td>시간</td>
+</tr>
+<tr>
+<td>2일</td>
+<td>0.877</td>
+<td>0.831</td>
+<td>무승부</td>
+</tr>
+<tr>
+<td><strong>3.65일</strong></td>
+<td><strong>0.938</strong></td>
+<td>0.786</td>
+<td><strong>합침</strong></td>
+</tr>
+<tr>
+<td>7일</td>
+<td>0.940</td>
+<td>0.776</td>
+<td>합침</td>
+</tr>
+<tr>
+<td>14일</td>
+<td>0.889</td>
+<td>0.631</td>
+<td>합침</td>
+</tr>
+<tr>
+<td>30일</td>
+<td>0.881</td>
+<td>0.411</td>
+<td>합침 (격차 최대)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>경계는 2~3.65일 사이</strong>입니다. 그리고 시간 폭이 넓어질수록 <strong>격차가 더 벌어집니다.</strong></p>
+<blockquote>
+<p><strong>이 실험의 신뢰도를 보여주는 증거 하나</strong>:
+표에는 안 넣었지만, "의미만 쓴 경우"와 "부품위치만 쓴 경우"의 점수는
+<strong>1일부터 30일까지 전 구간에서 정확히 똑같았습니다</strong>(0.232, 0.197).
+당연합니다 — 시간 폭을 바꿨으니 시간 채널만 영향을 받아야 하니까요.
+이게 그대로 확인되었다는 건 <strong>실험이 의도한 것만 건드렸다</strong>는 뜻입니다.</p>
+</blockquote>
+<h2 id="55">5.5 언제쯤 알아챌 수 있나 (탐지 지연)</h2>
+<p>실무에서 중요한 질문입니다. <strong>"고장이 몇 건쯤 쌓여야 공통원인이 보이나?"</strong></p>
+<p>측정 결과 (600건 중):</p>
+<table>
+<thead>
+<tr>
+<th>신호 강도</th>
+<th>찾아낸 비율</th>
+<th>필요한 누적 고장 건수</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>약함 (δ=0.25)</td>
+<td>7%</td>
+<td>478건</td>
+</tr>
+<tr>
+<td>중간 (δ=0.50)</td>
+<td>28%</td>
+<td>309건</td>
+</tr>
+<tr>
+<td>강함 (δ=1.00)</td>
+<td><strong>56%</strong></td>
+<td><strong>269건</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>신호가 아무리 강해도 절반 정도만, 그것도 600건 중 269건(45%)이 쌓인 뒤에야</strong>
+알아챕니다.</p>
+<blockquote>
+<p><strong>이 결과의 솔직한 의미</strong>:
+이 도구는 <strong>"조기경보 장치"가 아닙니다.</strong> 고장이 터지자마자 알려주는 게 아니라,
+어느 정도 쌓인 뒤에 "돌이켜보니 이것들이 한 묶음이었네"를 찾아주는
+<strong>사후 분석 도구</strong>입니다. 이 점을 오해하면 안 됩니다.</p>
+</blockquote>
+<h2 id="56-c6">5.6 제가 두 번 틀렸던 이야기 (C6)</h2>
+<p>기술서에 실패담을 적는 건 이례적이지만, <strong>교훈이 명확해서</strong> 남깁니다.</p>
+<p>"규모" 점수와 "치명도" 점수가 서로 중복되는 것 아닌가 하는 의심이 있었습니다.
+판단이 <strong>세 번 바뀌었습니다.</strong></p>
+<ol>
+<li><strong>이론적 추론</strong>: "계산식을 보니 중복이 맞다" → <strong>근거 없이 단정한 오류</strong></li>
+<li><strong>소규모 예비실험 1회</strong>: 상관 +0.20 → "중복 아니네, 기각" → <strong>1회 실험으로 판단한 오류</strong></li>
+<li><strong>본 실험 8회</strong>: 상관 <strong>+0.841</strong> → "역시 중복이 맞나?"</li>
+<li><strong>최종 검증</strong>: 중복을 실제로 제거해 봤더니 → <strong>순위 정확도가 0.920 → 0.750으로 악화</strong></li>
+</ol>
+<p><strong>결론: 그 상관은 제거해야 할 중복이 아니라 실제로 유용한 신호였습니다.</strong>
+정답 치명도 자체가 "묶음 안의 값을 다 더한 것"이라 규모와 상관되는 게 당연했습니다.</p>
+<blockquote>
+<p><strong>교훈</strong>: <strong>한 번 돌린 실험 결과로 판단하면 안 된다</strong>는 원칙은 성능 수치뿐 아니라
+<strong>진단용 통계에도 똑같이 적용되어야 합니다.</strong> 저는 예비실험 1회 결과(+0.20)로
+사전등록 문서에 잘못된 근거를 적었습니다. 다행히 <strong>결정 자체는 옳았지만
+근거가 틀렸었고</strong>, 이를 보고서에 그대로 밝혔습니다.</p>
+</blockquote>
+<h2 id="57">5.7 재현성 확인</h2>
+<p>같은 설정으로 실험을 다시 돌려, <strong>120개 조건 × 시드 조합 전체</strong>에서 결과가 일치하는지
+확인했습니다.</p>
+<p><strong>결과: 모든 항목의 차이가 정확히 0.0.</strong> 난수를 전부 통제한 설계가 실제로 작동함을
+확인했습니다. 즉 <strong>누가 언제 돌려도 같은 숫자가 나옵니다.</strong></p>
+<hr />
+<h1 id="6">6. 활용 기술 — 무엇을 썼고 왜 골랐나</h1>
+<h2 id="61">6.1 기반 기술</h2>
+<table>
+<thead>
+<tr>
+<th>기술</th>
+<th>역할</th>
+<th>왜 이걸 골랐나</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Python</strong></td>
+<td>전체 개발 언어</td>
+<td>데이터 분석 생태계가 가장 풍부</td>
+</tr>
+<tr>
+<td><strong>Streamlit</strong></td>
+<td>웹 대시보드</td>
+<td>파이썬만으로 화면을 만들 수 있어 별도 웹 개발이 불필요</td>
+</tr>
+<tr>
+<td><strong>SQLite</strong></td>
+<td>데이터 저장</td>
+<td>서버 설치 없이 파일 하나로 동작. 로컬 단일 PC 환경에 적합</td>
+</tr>
+<tr>
+<td><strong>pandas</strong></td>
+<td>표 형태 데이터 처리</td>
+<td>사실상 표준</td>
+</tr>
+<tr>
+<td><strong>Plotly</strong></td>
+<td>대화형 그래프</td>
+<td>마우스로 확대·탐색 가능</td>
+</tr>
+</tbody>
+</table>
+<h2 id="62">6.2 분석 기술</h2>
+<h3 id="kosbert">KoSBERT (한국어 문장 임베딩)</h3>
+<p><strong>하는 일</strong>: 한국어 문장을 숫자 목록(벡터)으로 바꿉니다. 뜻이 비슷하면 숫자도 비슷합니다.</p>
+<p><strong>쉬운 비유</strong>: 도서관에서 책을 주제별로 꽂는 것과 비슷합니다. 제목의 글자가 달라도
+내용이 비슷하면 가까운 서가에 꽂힙니다. KoSBERT는 문장에 대해 그 "서가 위치"를
+숫자로 계산해 줍니다.</p>
+<p><strong>쓴 모델</strong>: <code>snunlp/KR-SBERT-V40K-klueNLI-augSTS</code> (서울대 NLP 연구실 공개 모델)</p>
+<h3 id="hdbscan">HDBSCAN (밀도 기반 군집화)</h3>
+<p><strong>하는 일</strong>: 가까운 것들끼리 자동으로 묶습니다.</p>
+<p><strong>쉬운 비유</strong>: 밤하늘의 별을 보고 별자리를 찾는 것과 비슷합니다. 별이 빽빽하게 모인
+곳은 하나의 무리로 보고, 혼자 외따로 떨어진 별은 <strong>"어느 무리에도 안 속함"</strong> 으로
+남겨둡니다.</p>
+<p><strong>왜 이걸 골랐나</strong>
+- 몇 개로 묶을지 미리 안 정해도 됨 (실제로 공통원인이 몇 개인지 모름)
+- <strong>잡음을 인정함</strong> — 단발 고장을 억지로 끼워넣지 않음
+- 미리 계산한 거리표를 그대로 넣을 수 있음 (우리는 3채널을 합친 거리를 쓰므로 필수)</p>
+<blockquote>
+<p><strong>구현 참고</strong>: 별도의 <code>hdbscan</code> 패키지 대신 <code>scikit-learn</code>에 내장된 것을 썼습니다.
+알고리즘은 같으면서 설치 시 컴파일이 필요 없어 윈도우 환경에서 문제가 없기 때문입니다.</p>
+</blockquote>
+<h3 id="kaplan-meier">Kaplan-Meier (생존분석)</h3>
+<p><strong>하는 일</strong>: "아직 안 끝난 것"이 섞여 있어도 평균을 제대로 추정합니다.</p>
+<p><strong>쉬운 비유</strong>: 병원에서 "이 병의 평균 생존기간"을 계산할 때, 아직 살아 계신 분들을
+빼고 계산하면 실제보다 짧게 나옵니다. 그렇다고 넣을 수도 없죠(아직 모르니까).
+Kaplan-Meier는 <strong>"최소한 지금까지는 살아 계셨다"는 정보를 버리지 않고</strong> 반영합니다.</p>
+<p>우리는 이걸 <strong>수리시간</strong>에 적용했습니다. "아직 수리 중"인 건을 버리지 않습니다.</p>
+<h3 id="_4">그 외</h3>
+<table>
+<thead>
+<tr>
+<th>기술</th>
+<th>역할</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TF-IDF</strong></td>
+<td>단어 빈도 기반 고전적 방법. <strong>비교 기준선</strong>과 <strong>누출 검사</strong>에 사용</td>
+</tr>
+<tr>
+<td><strong>ARI</strong></td>
+<td>두 묶음 결과가 얼마나 일치하는지 재는 척도. 0이면 우연 수준, 1이면 완전 일치</td>
+</tr>
+<tr>
+<td><strong>Spearman 상관</strong></td>
+<td>두 순위표가 얼마나 비슷한지 재는 척도</td>
+</tr>
+<tr>
+<td><strong>부트스트랩</strong></td>
+<td>적은 표본으로 "이 차이가 우연일 가능성"을 추정하는 방법</td>
+</tr>
+<tr>
+<td><strong>playwright</strong></td>
+<td>대시보드 화면을 자동으로 캡처 (논문 그림용)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="63">6.3 개발 품질 관리</h2>
+<table>
+<thead>
+<tr>
+<th>항목</th>
+<th>내용</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>자동 테스트 121건</strong></td>
+<td>코드를 고칠 때마다 전부 돌려서 기존 기능이 깨지지 않았는지 확인</td>
+</tr>
+<tr>
+<td><strong>작은 단위 커밋</strong></td>
+<td>기능 하나당 하나씩 기록을 남겨 나중에 되짚을 수 있게</td>
+</tr>
+<tr>
+<td><strong>난수 통제</strong></td>
+<td>무작위가 들어가는 모든 곳에 "씨앗값"을 넣어 항상 같은 결과가 나오게</td>
+</tr>
+<tr>
+<td><strong>사전등록 문서</strong></td>
+<td>실험 기준을 먼저 적고 고정</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="7">7. 활용 방안 — 실제로 어떻게 쓰나</h1>
+<h2 id="71">7.1 지금 바로 쓸 수 있는 것</h2>
+<h3 id="1_3">① 정비기록 관리 대시보드</h3>
+<p>7개 화면으로 구성되어 있습니다.</p>
+<table>
+<thead>
+<tr>
+<th>화면</th>
+<th>용도</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>요약 대시보드</td>
+<td>전체 현황 한눈에 — 가용도, MTBF, MTTR, 미완료 건수</td>
+</tr>
+<tr>
+<td>고장 입력</td>
+<td>새 고장기록 등록</td>
+</tr>
+<tr>
+<td>고장 현황</td>
+<td>조건별 조회, 수정, 삭제</td>
+</tr>
+<tr>
+<td>분석</td>
+<td>파레토 분석 (어떤 부품·유형이 문제인지 상위부터)</td>
+</tr>
+<tr>
+<td><strong>공통원인 후보</strong></td>
+<td>자동 군집화 + 우선순위 순위표</td>
+</tr>
+<tr>
+<td><strong>실험 결과</strong></td>
+<td>검증 실험 결과 시각화</td>
+</tr>
+<tr>
+<td><strong>BIT 연결</strong></td>
+<td>자체진단 로그와 정비기록 연결 조회</td>
+</tr>
+</tbody>
+</table>
+<h3 id="2_4">② 외부 데이터 가져오기</h3>
+<p>엑셀이나 CSV 파일을 올리면 자동으로 컬럼을 맞춰 넣습니다.
+한국어 컬럼명(<code>제대구분</code>, <code>발생일시</code>)과 영어 컬럼명(<code>echelon</code>, <code>occurred_at</code>) 둘 다
+인식하고, <strong>맞출 수 없는 컬럼은 경고로 알려줍니다.</strong></p>
+<h3 id="3_3">③ 지표 계산 엔진</h3>
+<p>Ai, MTBF(운용시간 기준), MTTR(절단 보정) 계산을 <strong>검증된 함수</strong>로 제공합니다.
+계산식과 근거가 코드 주석에 적혀 있어 감사·검토가 가능합니다.</p>
+<h2 id="72">7.2 실무 시나리오</h2>
+<p><strong>시나리오 A — 분기별 공통원인 검토 회의</strong></p>
+<pre><code>1. 지난 분기 정비기록을 CSV로 내려받아 업로드
+2. [공통원인 후보] 화면에서 탐지 실행
+3. 순위표 상위 3개 군집 확인
+   → 각 군집의 대표 부품 위치와 대표 문장 3개를 보고
+     &quot;아, 이건 B.01 계통 제어보드 문제 같다&quot; 파악
+4. 해당 군집을 클릭해 상세 목록 확인
+5. 의심되는 건을 FMECA·고장분석 절차로 넘김
+</code></pre>
+<p><strong>중요</strong>: 이 도구는 <strong>"여기부터 보세요"</strong> 라고 후보를 좁혀줄 뿐,
+<strong>원인을 판정하지 않습니다.</strong> 판정은 사람이 정식 절차로 해야 합니다.</p>
+<p><strong>시나리오 B — 가중치 조정으로 다른 관점 보기</strong></p>
+<p>화면의 슬라이더로 가중치를 바꿀 수 있습니다.
+- 의미 가중치를 높이면 → <strong>증상이 비슷한 것</strong> 위주로 묶임
+- 구조 가중치를 높이면 → <strong>같은 계통 부품</strong> 위주로 묶임
+- 시간 가중치를 높이면 → <strong>비슷한 시기 발생</strong> 위주로 묶임</p>
+<p>같은 데이터를 여러 관점에서 보면서 담당자의 직관과 대조할 수 있습니다.</p>
+<h2 id="73">7.3 연구·문서화 용도</h2>
+<ul>
+<li><strong>논문 작성</strong>: 그림 6종, 표 5종을 명령어 한 줄로 재생성</li>
+<li><strong>재현성</strong>: 누가 언제 돌려도 같은 결과 (검증 완료)</li>
+<li><strong>방법론 참고</strong>: 순환검증 차단 설계는 <strong>다른 분야의 합성데이터 평가에도 그대로 적용
+  가능</strong>합니다. 이것이 이 프로젝트의 가장 이전 가능한 자산일 수 있습니다.</li>
+</ul>
+<hr />
+<h1 id="8">8. 기대 효과</h1>
+<h2 id="81">8.1 직접 효과</h2>
+<table>
+<thead>
+<tr>
+<th>효과</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>검토 대상 축소</strong></td>
+<td>수백 건을 다 읽는 대신 상위 몇 개 군집부터 검토</td>
+</tr>
+<tr>
+<td><strong>표현 차이 극복</strong></td>
+<td>"과열"과 "온도 급상승"을 같은 것으로 인식</td>
+</tr>
+<tr>
+<td><strong>다차원 근거</strong></td>
+<td>"증상도 비슷하고 부품도 이웃이고 시기도 몰렸다"는 복합 근거 제시</td>
+</tr>
+<tr>
+<td><strong>지표 신뢰도 회복</strong></td>
+<td>Ai/Ao 혼동, 수리시간 과소평가 등 <strong>기존 오류 3건 수정</strong></td>
+</tr>
+</tbody>
+</table>
+<h2 id="82">8.2 간접 효과</h2>
+<p><strong>데이터 품질 개선 유인</strong></p>
+<p>이 도구는 LCN(부품 주소)이 있어야 제 성능이 납니다. 즉 <strong>"LCN을 제대로 기록하면
+이런 분석이 가능하다"</strong> 는 것을 보여줌으로써, 현장에서 데이터를 제대로 적을 동기를
+만듭니다. 선행 연구<sup id="fnref2:1"><a class="footnote-ref" href="#fn:1">1</a></sup>가 지적한 데이터 품질 문제에 대한 <strong>구체적 유인</strong>입니다.</p>
+<p><strong>정직한 지표 문화</strong></p>
+<ul>
+<li>계산할 수 없는 지표는 <strong>억지로 만들지 않고 "미산출"로 표시</strong></li>
+<li>모든 지표 카드에 <strong>데이터 출처 배지</strong> 표시 (샘플/합성/외부, 섞였으면 비율까지)</li>
+<li>MTTR에 <strong>완료/미완료 건수 병기</strong> — 편향 가능성을 숨기지 않음</li>
+</ul>
+<p><strong>검증 방법론 자산</strong></p>
+<p>3장의 순환검증 차단 설계는 이 프로젝트만의 것이 아닙니다.
+<strong>"AI로 뭔가 찾아냈다"고 주장하는 모든 연구</strong>가 같은 함정에 빠질 수 있습니다.
+그 함정을 코드 수준에서 막는 구체적 방법을 문서와 테스트로 남겼습니다.</p>
+<h2 id="83">8.3 기대하면 안 되는 것 (중요)</h2>
+<p>정직하게 선을 긋겠습니다.</p>
+<table>
+<thead>
+<tr>
+<th>기대하면 안 되는 것</th>
+<th>이유</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>❌ 고장 원인을 판정해 준다</td>
+<td><strong>후보만 좁혀줍니다.</strong> 원인 판정은 FMECA·FTA·고장분석의 몫</td>
+</tr>
+<tr>
+<td>❌ 고장을 미리 예측한다</td>
+<td>예측 기능은 없습니다. 이미 일어난 고장을 묶을 뿐</td>
+</tr>
+<tr>
+<td>❌ 조기에 경보를 준다</td>
+<td>5.5절 — 600건 중 269건 쌓인 뒤에야, 그것도 56%만</td>
+</tr>
+<tr>
+<td>❌ 실제 야전에서 이만큼 나온다</td>
+<td>모든 수치는 <strong>가짜 데이터 기준</strong>입니다</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="9">9. 한계 — 무엇을 못 하는가</h1>
+<h2 id="91">9.1 가장 큰 한계: 실제 데이터로 검증하지 않았다</h2>
+<p><strong>모든 성능 수치는 합성데이터(가짜 데이터) 기준입니다.</strong></p>
+<ul>
+<li>가짜 데이터는 제가 정한 규칙대로 만들어졌습니다.</li>
+<li>실제 정비병이 쓰는 문장은 훨씬 다양하고 지저분할 것입니다.</li>
+<li>오타, 약어, 은어, 빈칸이 실제로는 많을 것입니다.</li>
+</ul>
+<p><strong>따라서 "실제 현장에서 몇 % 맞힌다"는 말은 이 연구로는 할 수 없습니다.</strong></p>
+<h2 id="92">9.2 결론이 가정에 의존한다</h2>
+<p>5.3~5.4절에서 본 대로, <strong>"세 채널을 합치는 게 유리한가"의 답이 시간 폭 가정에 따라
+뒤집힙니다.</strong></p>
+<ul>
+<li>1~2일 가정: 시간 하나만 쓰는 게 낫다</li>
+<li>3.65일 이상 가정: 합치는 게 낫다</li>
+</ul>
+<p><strong>문제는 어느 쪽이 현실인지 모른다는 것입니다.</strong> 문헌을 찾아봤지만, 공통원인 고장의
+시간 창은 <strong>표준화된 값이 아니라 "임무와 점검주기에 따라 분석자가 선택하는 값"</strong> 이라고
+명시되어 있습니다<sup id="fnref:3"><a class="footnote-ref" href="#fn:3">3</a></sup>. 즉 <strong>찾을 수 있는 정답이 없습니다.</strong></p>
+<p>그래서 하나를 고르는 대신 <strong>1일~30일 전 구간의 결과를 다 보고</strong>했습니다.
+정직한 처리이지만, <strong>"그래서 현실은 어느 쪽인가"에 답하지 못한다는 한계는 그대로</strong>입니다.</p>
+<h2 id="93-llm">9.3 문장 생성기가 진짜 LLM이 아니다</h2>
+<p>가짜 정비기록의 문장을 만들 때, 실제 대규모 언어모델(LLM) 대신
+<strong>템플릿 + 동의어 치환</strong> 방식을 썼습니다. (오프라인에서도 재현 가능하게 하려고)</p>
+<p>그 결과 문장이 실제보다 <strong>규칙적</strong>입니다. 실제로 이 영향이 의심되는 징후가 있습니다.
+- 단순 키워드 규칙 방식이 점수 0.644를 받았는데, 이는 <strong>예상보다 높습니다.</strong>
+- 생성된 문장이 규칙 사전으로 잡기 쉬운 구조였을 가능성이 있습니다.</p>
+<h2 id="94">9.4 탐지 지연 지표가 채널을 구별하지 못한다</h2>
+<p>7개 채널 조합별로 탐지 지연을 재봤더니, <strong>군집화 품질이 4배 넘게 차이 나는데도
+지연과 발견율은 거의 같았습니다.</strong></p>
+<table>
+<thead>
+<tr>
+<th>채널</th>
+<th>군집화 점수</th>
+<th>발견율</th>
+<th>지연</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>시간만</td>
+<td><strong>0.848</strong></td>
+<td>0.41</td>
+<td>279건</td>
+</tr>
+<tr>
+<td>세 채널</td>
+<td>0.685</td>
+<td>0.54</td>
+<td>292건</td>
+</tr>
+<tr>
+<td><strong>부품위치만</strong></td>
+<td><strong>0.197</strong></td>
+<td>0.49</td>
+<td>298건</td>
+</tr>
+</tbody>
+</table>
+<p>품질이 가장 나쁜 방식(0.197)이 가장 좋은 방식과 비슷한 지연을 보입니다.</p>
+<p>원인을 들여다보니, 지연을 판정하는 기준("묶음 하나라도 순도 80% 넘으면 발견")이
+<strong>전체 품질을 반영하지 못하기 때문</strong>으로 보입니다. 초기 구간이 한 군집에 쏠려 있으면
+어떤 방식이든 쉽게 통과합니다.</p>
+<p><strong>다만 이 원인 분석은 한 번의 관찰에 근거한 부분 검증</strong>이라 단정하지 않았습니다
+(5.6절의 교훈 때문입니다). 지표 정의를 고치려면 <strong>사전등록을 다시 하고</strong> 재실험해야
+합니다.</p>
+<h2 id="95">9.5 기타 한계</h2>
+<table>
+<thead>
+<tr>
+<th>한계</th>
+<th>내용</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>낮은 신호는 못 찾음</td>
+<td>신호 강도 0.25 이하에서는 점수가 0. <strong>탐지 가능 구간은 0.5 이상</strong></td>
+</tr>
+<tr>
+<td>보수적 군집화</td>
+<td>묶은 건 대체로 맞지만(정밀도 0.986) <strong>놓치는 게 많음</strong>(재현율 0.795)</td>
+</tr>
+<tr>
+<td>단일 PC 전제</td>
+<td>다중 사용자, 권한 관리, 네트워크 보안 미구현</td>
+</tr>
+<tr>
+<td>Ao 미산출</td>
+<td>정비지연시간(MDT/ALDT) 데이터가 없어 진짜 운용가용도는 계산 불가</td>
+</tr>
+<tr>
+<td>샘플 데이터에 LCN 없음</td>
+<td>기존 샘플 100건에는 부품 주소가 없어, 공통원인 기능은 합성/외부 데이터 필요</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="10">10. 앞으로 할 일</h1>
+<h2 id="101">10.1 가장 시급한 것</h2>
+<p><strong>실제 야전 정비기록 확보.</strong> 9.1~9.2의 한계가 모두 여기서 풀립니다.
+실데이터가 있으면 <strong>공통원인 고장이 실제로 며칠에 걸쳐 퍼지는지</strong>를 측정할 수 있고,
+그러면 9.2의 "어느 쪽이 현실인가" 질문에 답할 수 있습니다.</p>
+<h2 id="102">10.2 중기 과제</h2>
+<table>
+<thead>
+<tr>
+<th>과제</th>
+<th>내용</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>탐지 지연 지표 재정의</td>
+<td>9.4의 문제 해결 (사전등록 후 재실험 필요)</td>
+</tr>
+<tr>
+<td>실제 LLM 적용</td>
+<td>9.3의 문장 규칙성 문제 완화</td>
+</tr>
+<tr>
+<td>Ao 산출</td>
+<td>정비지연시간 필드를 실제로 수집하면 가능</td>
+</tr>
+<tr>
+<td>다중 사용자</td>
+<td>인증·권한·감사 로그</td>
+</tr>
+</tbody>
+</table>
+<h2 id="103">10.3 하지 않기로 한 것</h2>
+<ul>
+<li><strong>고장 예측 AI</strong>: 데이터가 충분히 쌓이기 전에는 시기상조</li>
+<li><strong>BIT 로그를 탐지에 융합</strong>: 순환성 위험(3.3 규칙 3) — 의도적으로 배제</li>
+</ul>
+<hr />
+<h1 id="11_1">11. 용어 사전</h1>
+<table>
+<thead>
+<tr>
+<th>용어</th>
+<th>쉬운 설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>IPS / ILS</strong></td>
+<td>종합군수지원. 장비를 도입부터 폐기까지 굴리는 데 필요한 모든 지원 활동</td>
+</tr>
+<tr>
+<td><strong>MRO</strong></td>
+<td>정비·수리·운영(Maintenance, Repair, Operation)</td>
+</tr>
+<tr>
+<td><strong>RAM</strong></td>
+<td>신뢰도·가용도·정비도</td>
+</tr>
+<tr>
+<td><strong>Ai (고유가용도)</strong></td>
+<td>고장 빈도와 수리 시간만으로 계산한 이상적 가동률</td>
+</tr>
+<tr>
+<td><strong>Ao (운용가용도)</strong></td>
+<td>부품 대기, 행정 지연까지 포함한 <strong>실제</strong> 가동률. 항상 Ai보다 낮음</td>
+</tr>
+<tr>
+<td><strong>MTBF</strong></td>
+<td>평균 고장간격. 얼마나 자주 고장나나</td>
+</tr>
+<tr>
+<td><strong>MTTR</strong></td>
+<td>평균 수리시간. 고치는 데 얼마나 걸리나</td>
+</tr>
+<tr>
+<td><strong>MDT / ALDT</strong></td>
+<td>정비중단시간 / 행정·군수지연시간</td>
+</tr>
+<tr>
+<td><strong>LRU</strong></td>
+<td>현장에서 통째로 갈아끼우는 부품 단위</td>
+</tr>
+<tr>
+<td><strong>LCN</strong></td>
+<td>군수관리번호. 부품의 계층 주소 (예: A.01.03.02)</td>
+</tr>
+<tr>
+<td><strong>CCF (공통원인 고장)</strong></td>
+<td>여러 고장이 하나의 뿌리 원인에서 나온 것</td>
+</tr>
+<tr>
+<td><strong>FMECA / FTA</strong></td>
+<td>고장 원인을 정식으로 분석하는 표준 절차</td>
+</tr>
+<tr>
+<td><strong>BIT</strong></td>
+<td>장비 자체진단 기능</td>
+</tr>
+<tr>
+<td><strong>정비 3제대</strong></td>
+<td>1제대 부대정비 / 2제대 야전정비 / 3제대 창정비</td>
+</tr>
+<tr>
+<td><strong>임베딩</strong></td>
+<td>문장이나 단어를 숫자 목록으로 바꾼 것</td>
+</tr>
+<tr>
+<td><strong>군집화(클러스터링)</strong></td>
+<td>비슷한 것끼리 자동으로 묶는 것</td>
+</tr>
+<tr>
+<td><strong>HDBSCAN</strong></td>
+<td>밀도 기반 군집화 알고리즘. 잡음을 인정함</td>
+</tr>
+<tr>
+<td><strong>ARI</strong></td>
+<td>두 묶음 결과의 일치도. 0=우연 수준, 1=완전 일치</td>
+</tr>
+<tr>
+<td><strong>우측절단</strong></td>
+<td>"아직 안 끝난" 데이터가 섞여 통계가 왜곡되는 현상</td>
+</tr>
+<tr>
+<td><strong>Kaplan-Meier</strong></td>
+<td>우측절단을 보정하는 통계 방법</td>
+</tr>
+<tr>
+<td><strong>순환검증 / double dipping</strong></td>
+<td>정답을 문제에 섞어놓고 채점해서 실제보다 좋아 보이는 함정</td>
+</tr>
+<tr>
+<td><strong>사전등록</strong></td>
+<td>실험 전에 합격기준을 공개 문서로 고정하는 것</td>
+</tr>
+<tr>
+<td><strong>시드(seed)</strong></td>
+<td>무작위를 재현 가능하게 만드는 씨앗값</td>
+</tr>
+<tr>
+<td><strong>파레토 분석</strong></td>
+<td>상위 몇 개가 전체의 대부분을 차지하는지 보는 분석</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="12_1">12. 부록 — 프로젝트 구조</h1>
+<pre><code>failure-dashboard/
+├── backend/          데이터 저장·조회·지표 계산
+│   ├── models.py       데이터 구조 정의
+│   ├── database.py     DB 연결, 자동 마이그레이션
+│   ├── crud.py         입력·조회·집계
+│   ├── metrics.py      Ai·MTBF·MTTR 계산 (순수 함수)
+│   ├── constants.py    정비 제대 명칭 (한 곳에서 관리)
+│   └── adapters/       엑셀·CSV 가져오기
+├── frontend/
+│   └── app.py          대시보드 화면 7개
+├── synth/            가짜 데이터 생성기 (순환 차단)
+│   ├── physical.py     [규칙] 정답 → 물리상태
+│   ├── narrator.py     [생성] 물리상태 → 문장 (정답 안 보임)
+│   ├── leakage.py      누출 검사 3종
+│   └── bit.py          모의 BIT 로그
+├── detect/           탐지 엔진
+│   ├── channels.py     3채널 거리 계산
+│   ├── fusion.py       거리 합치기
+│   ├── cluster.py      HDBSCAN 군집화
+│   └── baselines.py    비교 기준선 2종
+├── prioritize/
+│   └── scoring.py      우선순위 점수·순위표
+├── experiments/      실험·평가·문서
+│   ├── preregistration*.md   사전등록 (실행 전 고정)
+│   ├── results_report*.md    결과 보고서
+│   ├── run*.py               실험 실행기
+│   └── export_*.py           논문 그림·표 생성
+├── tests/            자동 테스트 121건
+└── docs/
+    └── 기술서.md      (이 문서)
+</code></pre>
+<p><strong>주요 명령어</strong></p>
+<pre><code class="language-bash"># 대시보드 실행
+streamlit run frontend/app.py
+
+# 전체 테스트
+python -m pytest tests/ -q
+
+# 실험 재현
+python -m experiments.run --config experiments/configs/ablation.yaml --seeds 0-7
+
+# 논문 그림·표 생성
+python -m experiments.export_figures
+</code></pre>
+<hr />
+<p><em>이 문서는 프로젝트의 실제 코드와 실험 결과에 근거해 작성되었습니다.
+불합격 결과와 작성자의 판단 오류를 포함해, 확인된 사실만 기술했습니다.</em></p>
+<div class="footnote">
+<hr />
+<ol>
+<li id="fn:1">
+<p>김민준 외, "유도무기 고장 데이터 기반 MRO 데이터 수집 방향성 연구",
+  한국산학기술학회논문지, 2025.&#160;<a class="footnote-backref" href="#fnref:1" title="Jump back to footnote 1 in the text">&#8617;</a><a class="footnote-backref" href="#fnref2:1" title="Jump back to footnote 1 in the text">&#8617;</a></p>
+</li>
+<li id="fn:2">
+<p>Kriegeskorte 외, "Circular analysis in systems neuroscience: the dangers of
+  double dipping", Nature Neuroscience, 2009.&#160;<a class="footnote-backref" href="#fnref:2" title="Jump back to footnote 2 in the text">&#8617;</a></p>
+</li>
+<li id="fn:3">
+<p>NUREG/CR-6268, NUREG/CR-5485 (미국 원자력규제위원회 CCF 분석 지침)&#160;<a class="footnote-backref" href="#fnref:3" title="Jump back to footnote 3 in the text">&#8617;</a></p>
+</li>
+</ol>
+</div>
+</body></html>
